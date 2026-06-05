@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# uv
+.uv/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Data (runtime artifacts: db, checkpoints, inference outputs)
+/data/
+backend/data/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log

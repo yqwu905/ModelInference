@@ -1,0 +1,192 @@
+"""Background checkpoint-copy worker.
+
+Copies a checkpoint's source directory (local or over ssh) into its resolved
+``local_path`` using rsync (preferred) or a scp/copytree fallback, updating the
+row's status, size, and message as it goes. Runs on the shared job pool, so it
+opens its own DB session via :func:`app.db.session_scope`.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import yaml
+
+from .. import db
+from ..models import Checkpoint
+
+# Common single-file checkpoint extensions. Used only to guess file-vs-directory
+# for REMOTE sources (which cannot be stat'd before transfer).
+_FILE_SUFFIXES = {
+    ".safetensors", ".ckpt", ".bin", ".pt", ".pth", ".gguf",
+    ".onnx", ".h5", ".pkl", ".npz", ".zip", ".tar", ".gz",
+}
+
+# Config files recognised at the root of a directory checkpoint.
+_CONFIG_NAMES = ("config.yaml", "config.yml")
+
+# Hard caps. Config files are tiny; these bound work so a crafted config.yaml
+# (whose bytes come from the copy source, not the operator) cannot exhaust
+# memory or bloat the DB. safe_load does NOT limit YAML alias expansion, so we
+# also reject aliases outright via a custom loader — the "billion laughs"
+# vector — which checkpoint configs never legitimately need.
+_CONFIG_MAX_FILE_BYTES = 1 * 1024 * 1024        # 1 MB on-disk cap
+_CONFIG_MAX_SERIALIZED_BYTES = 1 * 1024 * 1024  # 1 MB serialized-output cap
+
+
+class _NoAliasSafeLoader(yaml.SafeLoader):
+    """SafeLoader that rejects YAML aliases (the alias/anchor expansion bomb)."""
+
+    def compose_node(self, parent, index):  # type: ignore[override]
+        if self.check_event(yaml.AliasEvent):
+            raise yaml.YAMLError("YAML aliases are not allowed in config files")
+        return super().compose_node(parent, index)
+
+
+def _load_config_metadata(dst: str) -> dict:
+    """Parse a ``config.yaml``/``config.yml`` at the root of ``dst``, if present.
+
+    Returns the parsed mapping, or ``{}`` when there is no config file, it is
+    too large, it cannot be read/parsed (including any use of YAML aliases), or
+    its top level is not a mapping. The result is size-bounded; never raises.
+    """
+    base = Path(dst)
+    for name in _CONFIG_NAMES:
+        f = base / name
+        if not f.is_file():
+            continue
+        try:
+            if f.stat().st_size > _CONFIG_MAX_FILE_BYTES:
+                return {}
+            data = yaml.load(f.read_text(encoding="utf-8"), Loader=_NoAliasSafeLoader)
+        except (yaml.YAMLError, OSError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        try:
+            if len(json.dumps(data)) > _CONFIG_MAX_SERIALIZED_BYTES:
+                return {}
+        except (TypeError, ValueError):
+            return {}
+        return data
+    return {}
+
+
+def copy_checkpoint(checkpoint_id: int) -> None:
+    """Copy a checkpoint's source into its local destination directory."""
+    with db.session_scope() as s:
+        checkpoint = s.get(Checkpoint, checkpoint_id)
+        if checkpoint is None:
+            return
+
+        checkpoint.status = "copying"
+        checkpoint.message = ""
+        s.add(checkpoint)
+        s.commit()
+
+        source_host = (checkpoint.source_host or "").strip()
+        source_path = checkpoint.source_path or ""
+        dst = checkpoint.local_path
+
+        status = "failed"
+        size_bytes = checkpoint.size_bytes
+        message = ""
+        local_is_file = False
+        config_metadata_json: str | None = None  # None => leave unchanged
+
+        try:
+            # Build the source spec: local path or user@host:path.
+            if source_host:
+                src = f"{source_host}:{source_path}"
+            else:
+                src = source_path
+
+            # Ensure destination and its parent exist.
+            dst_path = Path(dst)
+            dst_path.mkdir(parents=True, exist_ok=True)
+
+            # Trailing-slash semantics: for a DIRECTORY source, append "/" so
+            # rsync/scp land its CONTENTS inside dst. For a single FILE source,
+            # do NOT append "/" (that would make rsync/scp lstat a non-existent
+            # directory); the file is then placed inside the dst directory.
+            if source_host:
+                # We can't stat a remote path, so guess file vs directory by
+                # suffix: a remote single-file checkpoint must not get a "/".
+                if Path(source_path).suffix.lower() in _FILE_SUFFIXES:
+                    src = src.rstrip("/")
+                elif not src.endswith("/"):
+                    src = src + "/"
+            else:
+                local_is_file = Path(source_path).is_file()
+                if local_is_file:
+                    src = src.rstrip("/")
+                elif not src.endswith("/"):
+                    src = src + "/"
+
+            result = None
+            if shutil.which("rsync"):
+                cmd = ["rsync", "-az", "--no-owner", "--no-group"]
+                if source_host:
+                    cmd += [
+                        "-e",
+                        "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+                    ]
+                cmd += [src, dst]
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=3600
+                )
+            elif source_host:
+                cmd = [
+                    "scp",
+                    "-r",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    src,
+                    dst,
+                ]
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=3600
+                )
+            elif local_is_file:
+                # Local single file without rsync: copy it into dst.
+                shutil.copy2(source_path, Path(dst) / Path(source_path).name)
+            else:
+                # Local directory without rsync: copy its tree into dst.
+                shutil.copytree(source_path.rstrip("/"), dst, dirs_exist_ok=True)
+
+            if result is not None and result.returncode != 0:
+                status = "failed"
+                message = (
+                    result.stderr
+                    or result.stdout
+                    or f"exit {result.returncode}"
+                )[:2000]
+            else:
+                status = "ready"
+                size_bytes = sum(
+                    f.stat().st_size
+                    for f in Path(dst).rglob("*")
+                    if f.is_file()
+                )
+                message = ""
+                # Pick up config.yaml metadata for directory checkpoints (a
+                # single-file copy has no config file, yielding {}).
+                config_metadata_json = json.dumps(_load_config_metadata(dst))
+        except Exception as e:  # noqa: BLE001 - record failure on the row
+            status = "failed"
+            message = str(e)
+
+        # Re-fetch inside the session before the final update.
+        checkpoint = s.get(Checkpoint, checkpoint_id)
+        if checkpoint is not None:
+            checkpoint.status = status
+            checkpoint.size_bytes = size_bytes
+            checkpoint.message = message
+            if config_metadata_json is not None:
+                checkpoint.config_metadata = config_metadata_json
+            s.add(checkpoint)
+        s.commit()
