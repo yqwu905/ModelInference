@@ -1,6 +1,48 @@
 import React, { useEffect } from "react";
+import {
+  Badge,
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  MessageBar,
+  MessageBarBody,
+  Spinner,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { Dismiss20Regular } from "@fluentui/react-icons";
 
-/** Modal dialog. Renders nothing when `open` is false. Closes on overlay click / Esc. */
+// Re-export Fluent's Spinner under our stable name so existing callers keep
+// importing `Spinner` from this module.
+export { Spinner };
+
+const useUiStyles = makeStyles({
+  surface: { maxWidth: "560px" },
+  surfaceWide: { maxWidth: "760px" },
+  errorBar: { marginBottom: tokens.spacingVerticalL },
+  danger: { color: tokens.colorPaletteRedForeground1 },
+  lightbox: {
+    position: "fixed",
+    inset: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000000,
+    cursor: "zoom-out",
+  },
+  lightboxImg: {
+    maxWidth: "92vw",
+    maxHeight: "92vh",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+});
+
+/** Modal dialog. Closes on overlay click / Esc. Pass a <form> as children so
+ *  Enter-to-submit works; action buttons go at the end of the form. */
 export function Modal(props: {
   open: boolean;
   onClose: () => void;
@@ -9,81 +51,95 @@ export function Modal(props: {
   children: React.ReactNode;
 }) {
   const { open, onClose, title, wide, children } = props;
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
-  if (!open) return null;
+  const styles = useUiStyles();
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className={`modal${wide ? " wide" : ""}`} onClick={(e) => e.stopPropagation()}>
-        {title !== undefined && (
-          <div className="modal-title">
-            <h2>{title}</h2>
-            <button className="btn-sm" onClick={onClose}>✕</button>
-          </div>
-        )}
-        {children}
-      </div>
-    </div>
+    <Dialog
+      open={open}
+      onOpenChange={(_, data) => {
+        if (!data.open) onClose();
+      }}
+    >
+      <DialogSurface className={wide ? styles.surfaceWide : styles.surface}>
+        <DialogBody>
+          {title !== undefined && (
+            <DialogTitle
+              action={
+                <Button
+                  appearance="subtle"
+                  aria-label="关闭"
+                  icon={<Dismiss20Regular />}
+                  onClick={onClose}
+                />
+              }
+            >
+              {title}
+            </DialogTitle>
+          )}
+          <DialogContent>{children}</DialogContent>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: "Pending",
-  copying: "Copying",
-  running: "Running",
-  ready: "Ready",
-  done: "Done",
-  failed: "Failed",
+  pending: "待处理",
+  copying: "拷贝中",
+  running: "运行中",
+  ready: "就绪",
+  done: "完成",
+  failed: "失败",
+};
+const STATUS_COLOR: Record<string, "success" | "warning" | "danger" | "subtle"> = {
+  ready: "success",
+  done: "success",
+  pending: "warning",
+  copying: "warning",
+  running: "warning",
+  failed: "danger",
 };
 const ACTIVE = new Set(["pending", "copying", "running"]);
 
 /** Coloured status pill; shows a spinner for in-flight states. */
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`badge ${status}`}>
-      {ACTIVE.has(status) ? <Spinner /> : <span className="dot" />}
+    <Badge
+      appearance="filled"
+      color={STATUS_COLOR[status] ?? "subtle"}
+      icon={ACTIVE.has(status) ? <Spinner size="extra-tiny" /> : undefined}
+    >
       {STATUS_LABELS[status] ?? status}
-    </span>
+    </Badge>
   );
 }
 
-export function Spinner() {
-  return (
-    <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" strokeOpacity="0.3" />
-      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** Button that prompts window.confirm before invoking onConfirm. */
+/** Button that prompts window.confirm before invoking onConfirm. Danger-styled. */
 export function ConfirmButton(props: {
   onConfirm: () => void;
   message?: string;
-  className?: string;
   children: React.ReactNode;
   disabled?: boolean;
 }) {
-  const { onConfirm, message = "Are you sure?", className = "btn-sm btn-danger", children, disabled } = props;
+  const { onConfirm, message = "确定吗？", children, disabled } = props;
+  const styles = useUiStyles();
   return (
-    <button
-      className={className}
+    <Button
+      size="small"
+      appearance="subtle"
+      className={styles.danger}
       disabled={disabled}
       onClick={() => {
         if (window.confirm(message)) onConfirm();
       }}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
-/** Full-screen image viewer. Click anywhere to dismiss. */
+/** Full-screen image viewer. Click anywhere / Esc to dismiss. */
 export function Lightbox({ src, onClose }: { src: string | null; onClose: () => void }) {
+  const styles = useUiStyles();
   useEffect(() => {
     if (!src) return;
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -92,15 +148,20 @@ export function Lightbox({ src, onClose }: { src: string | null; onClose: () => 
   }, [src, onClose]);
   if (!src) return null;
   return (
-    <div className="lightbox" onClick={onClose}>
-      <img src={src} alt="" />
+    <div className={styles.lightbox} onClick={onClose}>
+      <img className={styles.lightboxImg} src={src} alt="" />
     </div>
   );
 }
 
 export function ErrorBanner({ error }: { error: string | null }) {
+  const styles = useUiStyles();
   if (!error) return null;
-  return <div className="banner error">{error}</div>;
+  return (
+    <MessageBar className={styles.errorBar} intent="error">
+      <MessageBarBody>{error}</MessageBarBody>
+    </MessageBar>
+  );
 }
 
 export function formatBytes(n: number): string {
@@ -112,5 +173,5 @@ export function formatBytes(n: number): string {
 
 export function formatDate(iso: string): string {
   const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+  return isNaN(d.getTime()) ? iso : d.toLocaleString("zh-CN");
 }

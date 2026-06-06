@@ -1,7 +1,19 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import {
+  Body1Strong,
+  Button,
+  Card,
+  Field,
+  Input,
+  Subtitle2,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
 import type { Checkpoint } from "../types";
 import { useAsync, usePolling } from "../hooks";
+import { useSharedStyles } from "../theme/sharedStyles";
 import {
   ConfirmButton,
   ErrorBanner,
@@ -12,7 +24,34 @@ import {
 } from "./ui";
 
 const DELETE_MESSAGE =
-  "Delete this checkpoint? This permanently removes its copied files and any inferences that depend on it.";
+  "删除该检查点？这将永久删除已拷贝的文件以及依赖它的推理结果。";
+
+const useStyles = makeStyles({
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+  },
+  actions: {
+    display: "flex",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+    marginTop: tokens.spacingVerticalL,
+  },
+  section: { marginTop: tokens.spacingVerticalXL },
+  metadata: { marginTop: tokens.spacingVerticalS },
+  metadataKv: { marginTop: tokens.spacingVerticalS },
+  cardKv: { marginTop: tokens.spacingVerticalS },
+  cardMessage: { marginTop: tokens.spacingVerticalS },
+  cardActions: {
+    display: "flex",
+    flexWrap: "wrap",
+    columnGap: tokens.spacingHorizontalS,
+    rowGap: tokens.spacingVerticalS,
+    marginTop: tokens.spacingVerticalM,
+  },
+});
 
 function sourceLabel(c: Checkpoint): string {
   return `${c.source_host ? `${c.source_host}:` : ""}${c.source_path}`;
@@ -29,6 +68,8 @@ function CopyCheckpointModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const s = useStyles();
+  const shared = useSharedStyles();
   const [displayName, setDisplayName] = useState("");
   const [sourceHost, setSourceHost] = useState("");
   const [sourcePath, setSourcePath] = useState("");
@@ -68,53 +109,45 @@ function CopyCheckpointModal({
   };
 
   return (
-    <Modal open={open} onClose={close} title="Copy checkpoint">
+    <Modal open={open} onClose={close} title="拷贝检查点">
       <form onSubmit={submit}>
         <ErrorBanner error={error} />
-        <div className="field">
-          <label htmlFor="ckpt-name">Display name</label>
-          <input
-            id="ckpt-name"
+        <Field label="显示名称" required>
+          <Input
             value={displayName}
             autoFocus
             required
             placeholder="epoch-50"
-            onChange={(e) => setDisplayName(e.target.value)}
+            onChange={(_, data) => setDisplayName(data.value)}
           />
-        </div>
-        <div className="field">
-          <label htmlFor="ckpt-host">
-            SSH host (user@host) — leave blank to copy from a local path
-          </label>
-          <input
-            id="ckpt-host"
+        </Field>
+        <Field label="SSH 主机(user@host) — 留空则从本地路径拷贝">
+          <Input
             value={sourceHost}
             placeholder="user@gpu-box"
-            onChange={(e) => setSourceHost(e.target.value)}
+            onChange={(_, data) => setSourceHost(data.value)}
           />
-        </div>
-        <div className="field">
-          <label htmlFor="ckpt-path">Source path</label>
-          <input
-            id="ckpt-path"
+        </Field>
+        <Field label="源路径" required>
+          <Input
             value={sourcePath}
             required
             placeholder="/data/checkpoints/run1"
-            className="mono"
-            onChange={(e) => setSourcePath(e.target.value)}
+            className={shared.mono}
+            onChange={(_, data) => setSourcePath(data.value)}
           />
-        </div>
-        <div className="btn-row spread">
-          <button type="button" className="btn-sm" onClick={close} disabled={saving}>
-            Cancel
-          </button>
-          <button
+        </Field>
+        <div className={s.actions}>
+          <Button type="button" onClick={close} disabled={saving}>
+            取消
+          </Button>
+          <Button
             type="submit"
-            className="btn-primary"
+            appearance="primary"
             disabled={saving || !displayName.trim() || !sourcePath.trim()}
           >
-            {saving ? "Starting copy…" : "Copy checkpoint"}
-          </button>
+            {saving ? "正在开始拷贝…" : "拷贝检查点"}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -130,6 +163,7 @@ function RenameCheckpointModal({
   onClose: () => void;
   onRenamed: () => void;
 }) {
+  const s = useStyles();
   const [name, setName] = useState(checkpoint?.display_name ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,26 +183,24 @@ function RenameCheckpointModal({
   };
 
   return (
-    <Modal open={!!checkpoint} onClose={onClose} title="Rename checkpoint">
+    <Modal open={!!checkpoint} onClose={onClose} title="重命名检查点">
       <form onSubmit={submit}>
         <ErrorBanner error={error} />
-        <div className="field">
-          <label htmlFor="ckpt-rename">Display name</label>
-          <input
-            id="ckpt-rename"
+        <Field label="显示名称" required>
+          <Input
             value={name}
             autoFocus
             required
-            onChange={(e) => setName(e.target.value)}
+            onChange={(_, data) => setName(data.value)}
           />
-        </div>
-        <div className="btn-row spread">
-          <button type="button" className="btn-sm" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button type="submit" className="btn-primary" disabled={saving || !name.trim()}>
-            {saving ? "Saving…" : "Save"}
-          </button>
+        </Field>
+        <div className={s.actions}>
+          <Button type="button" onClick={onClose} disabled={saving}>
+            取消
+          </Button>
+          <Button type="submit" appearance="primary" disabled={saving || !name.trim()}>
+            {saving ? "保存中…" : "保存"}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -176,23 +208,25 @@ function RenameCheckpointModal({
 }
 
 function MetadataSection({ metadata }: { metadata: Record<string, unknown> }) {
+  const s = useStyles();
+  const shared = useSharedStyles();
   const [open, setOpen] = useState(false);
   const entries = Object.entries(metadata ?? {});
   if (entries.length === 0) return null;
   return (
-    <div style={{ marginTop: 8 }}>
-      <button className="btn-sm" onClick={() => setOpen((o) => !o)}>
-        {open ? "Hide config.yaml" : `config.yaml (${entries.length} keys)`}
-      </button>
+    <div className={s.metadata}>
+      <Button size="small" onClick={() => setOpen((o) => !o)}>
+        {open ? "隐藏 config.yaml" : `config.yaml (${entries.length} 个键)`}
+      </Button>
       {open && (
-        <div className="kv" style={{ marginTop: 8 }}>
+        <div className={`${shared.kv} ${s.metadataKv}`}>
           {entries.map(([k, v]) => (
-            <span style={{ display: "contents" }} key={k}>
-              <span className="k">{k}</span>
-              <span className="mono">
+            <Fragment key={k}>
+              <span className={shared.kvKey}>{k}</span>
+              <span className={shared.kvVal}>
                 {typeof v === "string" ? v : JSON.stringify(v)}
               </span>
-            </span>
+            </Fragment>
           ))}
         </div>
       )}
@@ -201,6 +235,8 @@ function MetadataSection({ metadata }: { metadata: Record<string, unknown> }) {
 }
 
 export default function CheckpointPanel({ experimentId }: { experimentId: number }) {
+  const s = useStyles();
+  const shared = useSharedStyles();
   const { data, loading, error, reload } = useAsync(
     () => api.listCheckpoints(experimentId),
     [experimentId],
@@ -235,12 +271,12 @@ export default function CheckpointPanel({ experimentId }: { experimentId: number
   };
 
   return (
-    <section style={{ marginTop: 24 }}>
-      <div className="toolbar spread">
-        <h2>Checkpoints</h2>
-        <button className="btn-primary" onClick={() => setCopyOpen(true)}>
-          + Copy checkpoint
-        </button>
+    <section className={s.section}>
+      <div className={`${shared.toolbar} ${shared.spread}`}>
+        <Subtitle2>检查点</Subtitle2>
+        <Button appearance="primary" icon={<Add20Regular />} onClick={() => setCopyOpen(true)}>
+          拷贝检查点
+        </Button>
       </div>
 
       <ErrorBanner error={error ?? actionError} />
@@ -248,41 +284,41 @@ export default function CheckpointPanel({ experimentId }: { experimentId: number
       {loading ? (
         <Spinner />
       ) : !data || data.length === 0 ? (
-        <div className="empty">No checkpoints yet. Copy one to get started.</div>
+        <div className={shared.empty}>还没有检查点，拷贝一个开始吧。</div>
       ) : (
-        <div className="col">
+        <div className={shared.col}>
           {data.map((c) => (
-            <div className="card" key={c.id}>
-              <div className="spread">
-                <h3>{c.display_name}</h3>
+            <Card key={c.id}>
+              <div className={s.header}>
+                <Body1Strong>{c.display_name}</Body1Strong>
                 <StatusBadge status={c.status} />
               </div>
-              <div className="kv" style={{ marginTop: 8 }}>
-                <span className="k">Source</span>
-                <span className="mono">{sourceLabel(c)}</span>
-                <span className="k">Size</span>
+              <div className={`${shared.kv} ${s.cardKv}`}>
+                <span className={shared.kvKey}>来源</span>
+                <span className={shared.kvVal}>{sourceLabel(c)}</span>
+                <span className={shared.kvKey}>大小</span>
                 <span>{formatBytes(c.size_bytes)}</span>
               </div>
               {c.message && (
-                <p className="muted small" style={{ marginTop: 8 }}>
+                <p className={`${shared.muted} ${shared.small} ${s.cardMessage}`}>
                   {c.message}
                 </p>
               )}
               <MetadataSection metadata={c.metadata} />
-              <div className="btn-row" style={{ marginTop: 12 }}>
-                <button className="btn-sm" onClick={() => setRenaming(c)}>
-                  Rename
-                </button>
+              <div className={s.cardActions}>
+                <Button size="small" onClick={() => setRenaming(c)}>
+                  重命名
+                </Button>
                 {(c.status === "failed" || c.status === "ready") && (
-                  <button className="btn-sm" onClick={() => handleRecopy(c.id)}>
-                    Recopy
-                  </button>
+                  <Button size="small" onClick={() => handleRecopy(c.id)}>
+                    重新拷贝
+                  </Button>
                 )}
                 <ConfirmButton message={DELETE_MESSAGE} onConfirm={() => handleDelete(c.id)}>
-                  Delete
+                  删除
                 </ConfirmButton>
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}

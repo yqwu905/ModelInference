@@ -1,8 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  Badge,
+  Body1,
+  Body1Strong,
+  Breadcrumb,
+  BreadcrumbButton,
+  BreadcrumbDivider,
+  BreadcrumbItem,
+  Button,
+  Card,
+  Subtitle2,
+  Title3,
+  ToggleButton,
+  makeStyles,
+  mergeClasses,
+  tokens,
+} from "@fluentui/react-components";
 import { api } from "../api";
 import type { Evaluation, Inference } from "../types";
 import { useAsync, usePolling } from "../hooks";
+import { useSharedStyles } from "../theme/sharedStyles";
 import {
   ErrorBanner,
   Lightbox,
@@ -13,10 +31,64 @@ import {
 
 const MAX_SELECTED = 6;
 
-/** Render the params object of an inference compactly. */
+const useStyles = makeStyles({
+  card: { marginBottom: tokens.spacingVerticalL },
+  selectRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalS,
+  },
+  pair: { marginBottom: tokens.spacingVerticalM },
+  runningRow: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
+  },
+  resultCard: {
+    backgroundColor: tokens.colorNeutralBackground3,
+    marginTop: tokens.spacingVerticalM,
+  },
+  resultHead: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+    flexWrap: "wrap",
+  },
+  grid: {
+    display: "grid",
+    gap: tokens.spacingHorizontalL,
+    marginBottom: tokens.spacingVerticalL,
+  },
+  col: {
+    display: "flex",
+    flexDirection: "column",
+    rowGap: tokens.spacingVerticalS,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: tokens.spacingHorizontalM,
+  },
+  winnerCol: {
+    border: `2px solid ${tokens.colorPaletteGreenBorder2}`,
+  },
+  colHead: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  pastList: {
+    display: "flex",
+    flexDirection: "column",
+    rowGap: tokens.spacingVerticalM,
+  },
+});
+
+/** 紧凑地渲染推理的 params 对象。 */
 function paramsSummary(params: Record<string, unknown>): string {
   const entries = Object.entries(params);
-  if (entries.length === 0) return "no params";
+  if (entries.length === 0) return "无参数";
   return entries.map(([k, v]) => `${k}: ${String(v)}`).join(", ");
 }
 
@@ -31,15 +103,17 @@ function ImageThumbs({
   loading: boolean;
   onOpen: (src: string) => void;
 }) {
-  if (loading) return <Spinner />;
+  const shared = useSharedStyles();
+  if (loading) return <Spinner size="tiny" />;
   if (!images || images.length === 0) {
-    return <div className="muted small">No images.</div>;
+    return <Body1 className={mergeClasses(shared.muted, shared.small)}>暂无图片。</Body1>;
   }
   return (
-    <div className="thumbs">
+    <div className={shared.thumbs}>
       {images.map((src) => (
         <img
           key={`${inferenceId}-${src}`}
+          className={shared.thumbImg}
           src={src}
           alt=""
           loading="lazy"
@@ -52,9 +126,12 @@ function ImageThumbs({
 
 export default function ComparePage() {
   const params = useParams();
+  const navigate = useNavigate();
+  const shared = useSharedStyles();
+  const s = useStyles();
   const experimentId = Number(params.experimentId);
 
-  // --- core data loading ---
+  // --- 核心数据加载 ---
   const {
     data: experiment,
     loading: loadingExperiment,
@@ -78,24 +155,24 @@ export default function ComparePage() {
     [experimentId],
   );
 
-  // --- selection state ---
+  // --- 选择状态 ---
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  // --- lazily-loaded images cache, keyed by inference id ---
+  // --- 懒加载的图片缓存，按推理 id 键控 ---
   const [imagesById, setImagesById] = useState<Record<number, string[]>>({});
   const [imagesLoading, setImagesLoading] = useState<Record<number, boolean>>(
     {},
   );
 
-  // --- lightbox ---
+  // --- 灯箱 ---
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
-  // --- AI evaluation state ---
+  // --- AI 评测状态 ---
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [evalError, setEvalError] = useState<string | null>(null);
   const [startingEval, setStartingEval] = useState(false);
 
-  // --- past evaluations ---
+  // --- 历史评测 ---
   const {
     data: pastEvaluations,
     reload: reloadPast,
@@ -116,7 +193,7 @@ export default function ComparePage() {
     return map;
   }, [doneInferences]);
 
-  // Keep only ids that still exist & are done; preserve selection order.
+  // 仅保留仍存在且已完成的 id；保持选择顺序。
   const selected = useMemo(
     () =>
       selectedIds
@@ -125,7 +202,7 @@ export default function ComparePage() {
     [selectedIds, inferenceById],
   );
 
-  // Fetch images for any selected inference not yet cached.
+  // 为任何尚未缓存的已选推理拉取图片。
   useEffect(() => {
     for (const inf of selected) {
       if (imagesById[inf.id] !== undefined || imagesLoading[inf.id]) continue;
@@ -150,16 +227,16 @@ export default function ComparePage() {
       if (prev.length >= MAX_SELECTED) return prev;
       return [...prev, id];
     });
-    // A change in selection invalidates any in-flight verdict.
+    // 选择发生变化会使任何进行中的判定失效。
     setEvaluation(null);
     setEvalError(null);
   };
 
-  // Exactly-two selection drives the AI comparison.
+  // 恰好选择两个时驱动 AI 对比。
   const pairA = selected.length === 2 ? selected[0] : null;
   const pairB = selected.length === 2 ? selected[1] : null;
 
-  // Preload an existing verdict for the chosen pair (best effort).
+  // 为所选配对预载已存在的判定（尽力而为）。
   useEffect(() => {
     let cancelled = false;
     setEvaluation(null);
@@ -168,8 +245,8 @@ export default function ComparePage() {
     api
       .findEvaluation(pairA.id, pairB.id)
       .then((ev) => {
-        // Adopt a terminal verdict (to display) or an in-flight one (so the
-        // poller resumes it) instead of silently starting a duplicate.
+        // 采用一个终态判定（用于展示）或一个进行中的判定（让轮询器恢复它），
+        // 而不是悄悄地启动一个重复评测。
         if (
           !cancelled &&
           ev &&
@@ -186,7 +263,7 @@ export default function ComparePage() {
     };
   }, [pairA?.id, pairB?.id]);
 
-  // Poll a running evaluation until terminal.
+  // 轮询运行中的评测直到终态。
   const evalRunning =
     evaluation !== null &&
     (evaluation.status === "running" || evaluation.status === "pending");
@@ -224,9 +301,8 @@ export default function ComparePage() {
     }
   };
 
-  // Map an evaluation winner ("A"/"B") to an inference id using the
-  // evaluation's OWN inference_a_id/inference_b_id — not the current selection
-  // order, which may be reversed when a prior verdict is preloaded.
+  // 用评测自身的 inference_a_id/inference_b_id（而非当前选择顺序，预载先前判定时可能反转）
+  // 把评测的优胜者（"A"/"B"）映射到一个推理 id。
   const winnerInferenceId = useMemo(() => {
     if (!evaluation || evaluation.status !== "done") return null;
     const w = evaluation.result?.winner;
@@ -251,178 +327,190 @@ export default function ComparePage() {
     return null;
   }, [evaluation]);
 
-  // --- render ---
+  // --- 渲染 ---
   const topError = experimentError || projectError;
 
   if (loadingExperiment) {
     return (
-      <div className="container">
-        <Spinner />
+      <div className={shared.container}>
+        <Spinner label="加载中…" />
       </div>
     );
   }
 
   if (topError || !experiment) {
     return (
-      <div className="container">
-        <ErrorBanner error={topError || "Experiment not found."} />
+      <div className={shared.container}>
+        <ErrorBanner error={topError || "未找到实验。"} />
       </div>
     );
   }
 
   return (
-    <div className="container">
-      <div className="breadcrumbs">
+    <div className={shared.container}>
+      <Breadcrumb>
         {project ? (
           <>
-            <Link to={`/projects/${project.id}`}>{project.name}</Link>
-            {" / "}
+            <BreadcrumbItem>
+              <BreadcrumbButton onClick={() => navigate(`/projects/${project.id}`)}>
+                {project.name}
+              </BreadcrumbButton>
+            </BreadcrumbItem>
+            <BreadcrumbDivider />
           </>
         ) : null}
-        <Link to={`/experiments/${experimentId}`}>{experiment.name}</Link>
-        {" / Compare"}
-      </div>
+        <BreadcrumbItem>
+          <BreadcrumbButton onClick={() => navigate(`/experiments/${experimentId}`)}>
+            {experiment.name}
+          </BreadcrumbButton>
+        </BreadcrumbItem>
+        <BreadcrumbDivider />
+        <BreadcrumbItem>
+          <BreadcrumbButton current>对比</BreadcrumbButton>
+        </BreadcrumbItem>
+      </Breadcrumb>
 
-      <div className="toolbar spread">
-        <h1>Compare Inferences</h1>
+      <div className={`${shared.toolbar} ${shared.spread}`}>
+        <Title3>对比推理</Title3>
       </div>
 
       <ErrorBanner error={inferencesError} />
 
       {loadingInferences ? (
-        <Spinner />
+        <Spinner label="加载中…" />
       ) : doneInferences.length === 0 ? (
-        <div className="empty">
-          No completed inferences yet. Run some inferences first.
+        <div className={shared.empty}>
+          还没有完成的推理，请先运行一些推理。
         </div>
       ) : (
         <>
-          {/* selector */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="spread" style={{ marginBottom: 10 }}>
-              <h3 style={{ margin: 0 }}>
-                Select inferences ({selected.length}/{MAX_SELECTED})
-              </h3>
+          {/* 选择器 */}
+          <Card className={s.card}>
+            <div className={shared.spread}>
+              <Subtitle2>
+                选择推理 ({selected.length}/{MAX_SELECTED})
+              </Subtitle2>
               {selected.length >= MAX_SELECTED && (
-                <span className="muted small">Maximum 6</span>
+                <Body1 className={mergeClasses(shared.muted, shared.small)}>最多 6 个</Body1>
               )}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div className={s.selectRow}>
               {doneInferences.map((inf) => {
                 const isSelected = selectedIds.includes(inf.id);
                 const atMax =
                   !isSelected && selected.length >= MAX_SELECTED;
                 return (
-                  <button
+                  <ToggleButton
                     key={inf.id}
-                    type="button"
-                    className={isSelected ? "btn-sm btn-primary" : "btn-sm"}
+                    size="small"
+                    checked={isSelected}
                     disabled={atMax}
                     title={paramsSummary(inf.params)}
                     onClick={() => toggleSelect(inf.id)}
                   >
-                    {isSelected ? "✓ " : ""}
                     {inf.name}
-                  </button>
+                  </ToggleButton>
                 );
               })}
             </div>
-          </div>
+          </Card>
 
-          {/* AI comparison panel */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="spread" style={{ marginBottom: 10 }}>
-              <h3 style={{ margin: 0 }}>AI Comparison</h3>
+          {/* AI 对比面板 */}
+          <Card className={s.card}>
+            <div className={shared.spread}>
+              <Subtitle2>AI 对比</Subtitle2>
               {selected.length === 2 && (
-                <button
-                  className="btn-primary"
+                <Button
+                  appearance="primary"
                   disabled={startingEval || evalRunning}
                   onClick={() => void runComparison()}
                 >
-                  {startingEval || evalRunning ? "Running…" : "Compare with AI"}
-                </button>
+                  {startingEval || evalRunning ? "对比中…" : "用 AI 对比"}
+                </Button>
               )}
             </div>
 
             {selected.length !== 2 ? (
-              <div className="muted small">
-                Select exactly 2 inferences to run an AI comparison.
-              </div>
+              <Body1 className={mergeClasses(shared.muted, shared.small)}>
+                请选择恰好 2 个推理以进行 AI 对比。
+              </Body1>
             ) : (
               <>
                 {pairA && pairB && (
-                  <div className="muted small" style={{ marginBottom: 10 }}>
-                    A: <span className="mono">{pairA.name}</span> &nbsp;vs&nbsp;
-                    B: <span className="mono">{pairB.name}</span>
-                  </div>
+                  <Body1 className={mergeClasses(shared.muted, shared.small, s.pair)}>
+                    A：<span className={shared.mono}>{pairA.name}</span> &nbsp;对&nbsp;
+                    B：<span className={shared.mono}>{pairB.name}</span>
+                  </Body1>
                 )}
 
                 <ErrorBanner error={evalError} />
 
                 {evalRunning && (
-                  <div className="btn-row small" style={{ alignItems: "center" }}>
-                    <Spinner /> Evaluating with VLM…
+                  <div className={s.runningRow}>
+                    <Spinner size="tiny" />
+                    <Body1 className={shared.small}>正在使用 VLM 评测…</Body1>
                   </div>
                 )}
 
                 {evaluation && evaluation.status === "failed" && (
                   <>
                     <ErrorBanner
-                      error={evaluation.error || "Evaluation failed."}
+                      error={evaluation.error || "评测失败。"}
                     />
                     {evaluation.error
                       ?.toLowerCase()
                       .includes("vlm not configured") &&
                       project && (
-                        <div className="small">
-                          <Link to={`/projects/${project.id}`}>
-                            configure VLM
-                          </Link>{" "}
-                          for this project, then try again.
-                        </div>
+                        <Body1 className={shared.small}>
+                          <Button
+                            appearance="transparent"
+                            onClick={() => navigate(`/projects/${project.id}`)}
+                          >
+                            前往配置 VLM
+                          </Button>
+                          为本项目配置后请重试。
+                        </Body1>
                       )}
                   </>
                 )}
 
                 {evaluation && evaluation.status === "done" && (
-                  <div className="card" style={{ background: "var(--bg-3)" }}>
-                    <div className="spread">
-                      <h4 style={{ margin: 0 }}>
-                        Winner:{" "}
+                  <Card className={s.resultCard}>
+                    <div className={s.resultHead}>
+                      <Body1Strong>
+                        优胜：
                         {evaluation.result?.winner === "tie"
-                          ? "Tie"
+                          ? "平局"
                           : winnerInferenceId != null
                             ? `${evaluation.result?.winner} — ${
                                 winnerInf?.name ?? `#${winnerInferenceId}`
                               }`
                             : "—"}
-                      </h4>
-                      <span className="badge done">
-                        <span className="dot" />
-                        score:{" "}
-                        {evaluation.result?.score_a ?? "—"} vs{" "}
+                      </Body1Strong>
+                      <Badge appearance="filled" color="success">
+                        评分：{evaluation.result?.score_a ?? "—"} 比{" "}
                         {evaluation.result?.score_b ?? "—"}
-                      </span>
+                      </Badge>
                     </div>
                     {evaluation.result?.reason && (
-                      <p className="small" style={{ marginBottom: 0 }}>
+                      <Body1 className={shared.small}>
                         {evaluation.result.reason}
-                      </p>
+                      </Body1>
                     )}
-                  </div>
+                  </Card>
                 )}
               </>
             )}
-          </div>
+          </Card>
 
-          {/* compare grid */}
+          {/* 对比网格 */}
           {selected.length === 0 ? (
-            <div className="empty">
-              Select inferences above to compare them side by side.
+            <div className={shared.empty}>
+              在上方选择推理以并排对比。
             </div>
           ) : (
             <div
-              className="compare-grid"
+              className={s.grid}
               style={{
                 gridTemplateColumns: `repeat(${Math.min(
                   selected.length,
@@ -435,22 +523,21 @@ export default function ComparePage() {
                 return (
                   <div
                     key={inf.id}
-                    className={`compare-col${isWinner ? " winner" : ""}`}
+                    className={mergeClasses(s.col, isWinner && s.winnerCol)}
                   >
-                    <h4>
-                      <span className="mono">{inf.name}</span>
+                    <div className={s.colHead}>
+                      <Body1Strong className={shared.mono}>{inf.name}</Body1Strong>
                       {isWinner ? (
-                        <span className="badge done">
-                          <span className="dot" />
-                          🏆 winner{winnerScore != null ? ` ${winnerScore}` : ""}
-                        </span>
+                        <Badge appearance="filled" color="success">
+                          🏆 优胜{winnerScore != null ? ` ${winnerScore}` : ""}
+                        </Badge>
                       ) : (
                         <StatusBadge status={inf.status} />
                       )}
-                    </h4>
-                    <div className="muted small" style={{ marginBottom: 8 }}>
-                      {paramsSummary(inf.params)}
                     </div>
+                    <Body1 className={mergeClasses(shared.muted, shared.small)}>
+                      {paramsSummary(inf.params)}
+                    </Body1>
                     <ImageThumbs
                       inferenceId={inf.id}
                       images={imagesById[inf.id]}
@@ -463,60 +550,60 @@ export default function ComparePage() {
             </div>
           )}
 
-          {/* past evaluations */}
+          {/* 历史评测 */}
           {pastEvaluations && pastEvaluations.length > 0 && (
-            <div className="card" style={{ marginTop: 16 }}>
-              <h3>Past evaluations</h3>
-              <div className="col" style={{ gap: 8 }}>
+            <Card className={s.card}>
+              <Subtitle2>历史评测</Subtitle2>
+              <div className={s.pastList}>
                 {pastEvaluations.map((ev) => {
                   const a = inferenceById.get(ev.inference_a_id);
                   const b = inferenceById.get(ev.inference_b_id);
                   return (
-                    <div key={ev.id} className="kv">
-                      <span className="k">When</span>
-                      <span>{formatDate(ev.created_at)}</span>
-                      <span className="k">Pair</span>
-                      <span className="mono">
-                        {a?.name ?? `#${ev.inference_a_id}`} vs{" "}
+                    <div key={ev.id} className={shared.kv}>
+                      <span className={shared.kvKey}>时间</span>
+                      <span className={shared.kvVal}>{formatDate(ev.created_at)}</span>
+                      <span className={shared.kvKey}>配对</span>
+                      <span className={shared.kvVal}>
+                        {a?.name ?? `#${ev.inference_a_id}`} 对{" "}
                         {b?.name ?? `#${ev.inference_b_id}`}
                       </span>
-                      <span className="k">Status</span>
-                      <span>
+                      <span className={shared.kvKey}>状态</span>
+                      <span className={shared.kvVal}>
                         <StatusBadge status={ev.status} />
                       </span>
                       {ev.status === "done" && (
                         <>
-                          <span className="k">Winner</span>
-                          <span>
+                          <span className={shared.kvKey}>优胜</span>
+                          <span className={shared.kvVal}>
                             {ev.result?.winner ?? "—"}
                             {ev.result?.score_a != null ||
                             ev.result?.score_b != null
-                              ? ` (${ev.result?.score_a ?? "—"} vs ${
+                              ? ` (${ev.result?.score_a ?? "—"} 比 ${
                                   ev.result?.score_b ?? "—"
                                 })`
                               : ""}
                           </span>
                           {ev.result?.reason && (
-                            <>
-                              <span className="k">Reason</span>
-                              <span className="small muted">
+                            <Fragment>
+                              <span className={shared.kvKey}>理由</span>
+                              <span className={mergeClasses(shared.kvVal, shared.muted)}>
                                 {ev.result.reason}
                               </span>
-                            </>
+                            </Fragment>
                           )}
                         </>
                       )}
                       {ev.status === "failed" && ev.error && (
                         <>
-                          <span className="k">Error</span>
-                          <span className="small muted">{ev.error}</span>
+                          <span className={shared.kvKey}>错误</span>
+                          <span className={mergeClasses(shared.kvVal, shared.muted)}>{ev.error}</span>
                         </>
                       )}
                     </div>
                   );
                 })}
               </div>
-            </div>
+            </Card>
           )}
         </>
       )}

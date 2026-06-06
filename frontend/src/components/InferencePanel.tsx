@@ -1,4 +1,17 @@
 import { useEffect, useState } from "react";
+import { Fragment } from "react";
+import {
+  Body1Strong,
+  Button,
+  Card,
+  Field,
+  Input,
+  Select,
+  Subtitle2,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
 import type { Checkpoint, Inference, ParamDef, Project } from "../types";
 import { useAsync, usePolling } from "../hooks";
@@ -10,8 +23,30 @@ import {
   Spinner,
   StatusBadge,
 } from "./ui";
+import { useSharedStyles } from "../theme/sharedStyles";
 
-const DELETE_MESSAGE = "Delete this inference? This permanently removes its output images.";
+const DELETE_MESSAGE = "删除该推理？这将永久删除其输出图片。";
+
+const useStyles = makeStyles({
+  actions: {
+    display: "flex",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+    marginTop: tokens.spacingVerticalL,
+  },
+  cardHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+  },
+  hint: {
+    marginTop: `calc(-1 * ${tokens.spacingVerticalM})`,
+    marginBottom: tokens.spacingVerticalL,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+  },
+});
 
 function paramDefault(def: ParamDef): string {
   return String(def.default ?? "");
@@ -24,6 +59,7 @@ function ImagesModal({
   inference: Inference | null;
   onClose: () => void;
 }) {
+  const shared = useSharedStyles();
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,17 +92,23 @@ function ImagesModal({
       open={!!inference}
       onClose={onClose}
       wide
-      title={inference ? `Images — ${inference.name}` : "Images"}
+      title={inference ? `图片 — ${inference.name}` : "图片"}
     >
       <ErrorBanner error={error} />
       {loading ? (
         <Spinner />
       ) : images.length === 0 ? (
-        <div className="empty">No images yet</div>
+        <div className={shared.empty}>暂无图片</div>
       ) : (
-        <div className="thumbs">
+        <div className={shared.thumbs}>
           {images.map((src) => (
-            <img key={src} src={src} alt="" onClick={() => setLightbox(src)} />
+            <img
+              key={src}
+              className={shared.thumbImg}
+              src={src}
+              alt=""
+              onClick={() => setLightbox(src)}
+            />
           ))}
         </div>
       )}
@@ -84,6 +126,7 @@ function RenameInferenceModal({
   onClose: () => void;
   onRenamed: () => void;
 }) {
+  const s = useStyles();
   const [name, setName] = useState(inference?.name ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,26 +146,24 @@ function RenameInferenceModal({
   };
 
   return (
-    <Modal open={!!inference} onClose={onClose} title="Rename inference">
+    <Modal open={!!inference} onClose={onClose} title="重命名推理">
       <form onSubmit={submit}>
         <ErrorBanner error={error} />
-        <div className="field">
-          <label htmlFor="inf-rename">Name</label>
-          <input
-            id="inf-rename"
+        <Field label="名称" required>
+          <Input
             value={name}
             autoFocus
             required
-            onChange={(e) => setName(e.target.value)}
+            onChange={(_, data) => setName(data.value)}
           />
-        </div>
-        <div className="btn-row spread">
-          <button type="button" className="btn-sm" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button type="submit" className="btn-primary" disabled={saving || !name.trim()}>
-            {saving ? "Saving…" : "Save"}
-          </button>
+        </Field>
+        <div className={s.actions}>
+          <Button type="button" onClick={onClose} disabled={saving}>
+            取消
+          </Button>
+          <Button type="submit" appearance="primary" disabled={saving || !name.trim()}>
+            {saving ? "保存中…" : "保存"}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -144,6 +185,7 @@ function RunInferenceModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const s = useStyles();
   const schema = project.inference_param_schema;
   const [checkpointId, setCheckpointId] = useState<number | "">(
     readyCheckpoints[0]?.id ?? "",
@@ -164,8 +206,8 @@ function RunInferenceModal({
       const params: Record<string, unknown> = {};
       for (const def of schema) {
         if (def.type === "number") {
-          // Omit a blank/invalid number rather than sending 0 (Number(""))
-          // or null (Number("abc")); the backend then leaves its {token} intact.
+          // 空白/非法数字一律跳过，而不是发送 0（Number("")）或
+          // null（Number("abc")）；后端会因此保留其 {token} 占位符。
           const trimmed = (values[def.name] ?? "").trim();
           if (trimmed === "") continue;
           const n = Number(trimmed);
@@ -184,78 +226,72 @@ function RunInferenceModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Run inference">
+    <Modal open={open} onClose={onClose} title="运行推理">
       <form onSubmit={submit}>
         <ErrorBanner error={error} />
-        <div className="field">
-          <label htmlFor="inf-checkpoint">Checkpoint</label>
-          <select
-            id="inf-checkpoint"
-            value={checkpointId}
+        <Field label="检查点" required>
+          <Select
+            value={checkpointId === "" ? "" : String(checkpointId)}
             required
-            onChange={(e) => setCheckpointId(e.target.value ? Number(e.target.value) : "")}
+            onChange={(_, data) =>
+              setCheckpointId(data.value ? Number(data.value) : "")
+            }
           >
             {readyCheckpoints.map((c) => (
-              <option key={c.id} value={c.id}>
+              <option key={c.id} value={String(c.id)}>
                 {c.display_name}
               </option>
             ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="inf-name">Name</label>
-          <input
-            id="inf-name"
+          </Select>
+        </Field>
+        <Field label="名称" required>
+          <Input
             value={name}
             required
-            onChange={(e) => setName(e.target.value)}
+            onChange={(_, data) => setName(data.value)}
           />
-        </div>
+        </Field>
         {schema.map((def) => {
-          const id = `inf-param-${def.name}`;
           const value = values[def.name] ?? "";
           const onChange = (v: string) =>
             setValues((prev) => ({ ...prev, [def.name]: v }));
           return (
-            <div className="field" key={def.name}>
-              <label htmlFor={id}>{def.label}</label>
+            <Field label={def.label} key={def.name}>
               {def.type === "select" ? (
-                <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+                <Select value={value} onChange={(_, data) => onChange(data.value)}>
                   {(def.options ?? []).map((opt) => (
                     <option key={opt} value={opt}>
                       {opt}
                     </option>
                   ))}
-                </select>
+                </Select>
               ) : def.type === "number" ? (
-                <input
-                  id={id}
+                <Input
                   type="number"
                   value={value}
-                  onChange={(e) => onChange(e.target.value)}
+                  onChange={(_, data) => onChange(data.value)}
                 />
               ) : (
-                <input
-                  id={id}
+                <Input
                   type="text"
                   value={value}
-                  onChange={(e) => onChange(e.target.value)}
+                  onChange={(_, data) => onChange(data.value)}
                 />
               )}
-            </div>
+            </Field>
           );
         })}
-        <div className="btn-row spread">
-          <button type="button" className="btn-sm" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button
+        <div className={s.actions}>
+          <Button type="button" onClick={onClose} disabled={saving}>
+            取消
+          </Button>
+          <Button
             type="submit"
-            className="btn-primary"
+            appearance="primary"
             disabled={saving || checkpointId === "" || !name.trim()}
           >
-            {saving ? "Starting…" : "Run inference"}
-          </button>
+            {saving ? "开始中…" : "运行推理"}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -273,46 +309,46 @@ function InferenceCard({
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const s = useStyles();
+  const shared = useSharedStyles();
   const [showLog, setShowLog] = useState(false);
   const entries = Object.entries(inference.params);
   return (
-    <div className="card">
-      <div className="spread">
-        <h3>{inference.name}</h3>
+    <Card>
+      <div className={s.cardHeader}>
+        <Body1Strong>{inference.name}</Body1Strong>
         <StatusBadge status={inference.status} />
       </div>
       {entries.length > 0 && (
-        <div className="kv" style={{ marginTop: 8 }}>
+        <div className={shared.kv}>
           {entries.map(([k, v]) => (
-            <span style={{ display: "contents" }} key={k}>
-              <span className="k">{k}</span>
-              <span className="mono">
+            <Fragment key={k}>
+              <span className={shared.kvKey}>{k}</span>
+              <span className={shared.kvVal}>
                 {typeof v === "string" ? v : JSON.stringify(v)}
               </span>
-            </span>
+            </Fragment>
           ))}
         </div>
       )}
-      <div className="btn-row" style={{ marginTop: 12 }}>
-        <button className="btn-sm" onClick={onViewImages}>
-          View images
-        </button>
-        <button className="btn-sm" onClick={() => setShowLog((s) => !s)}>
-          {showLog ? "Hide log" : "Log"}
-        </button>
-        <button className="btn-sm" onClick={onRename}>
-          Rename
-        </button>
+      <div className={shared.btnRow}>
+        <Button size="small" onClick={onViewImages}>
+          查看图片
+        </Button>
+        <Button size="small" onClick={() => setShowLog((prev) => !prev)}>
+          {showLog ? "隐藏日志" : "日志"}
+        </Button>
+        <Button size="small" onClick={onRename}>
+          重命名
+        </Button>
         <ConfirmButton message={DELETE_MESSAGE} onConfirm={onDelete}>
-          Delete
+          删除
         </ConfirmButton>
       </div>
       {showLog && (
-        <pre className="log" style={{ marginTop: 12 }}>
-          {inference.log || "(no log output)"}
-        </pre>
+        <pre className={shared.log}>{inference.log || "（暂无日志输出）"}</pre>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -323,6 +359,8 @@ export default function InferencePanel({
   experimentId: number;
   project: Project;
 }) {
+  const shared = useSharedStyles();
+  const s = useStyles();
   const {
     data: inferences,
     loading: inferencesLoading,
@@ -361,25 +399,24 @@ export default function InferencePanel({
   const defaultName = `run-${(inferences?.length ?? 0) + 1}`;
 
   return (
-    <section style={{ marginTop: 24 }}>
-      <div className="toolbar spread">
-        <h2>Inferences</h2>
-        <button
-          className="btn-primary"
+    <section>
+      <div className={`${shared.toolbar} ${shared.spread}`}>
+        <Subtitle2>推理</Subtitle2>
+        <Button
+          appearance="primary"
+          icon={<Add20Regular />}
           disabled={!canRun}
           onClick={() => {
             void reloadCheckpoints();
             setRunOpen(true);
           }}
         >
-          + Run inference
-        </button>
+          运行推理
+        </Button>
       </div>
 
       {!canRun && (
-        <p className="muted small" style={{ marginTop: -8, marginBottom: 16 }}>
-          Copy a checkpoint and wait for it to be ready before running an inference.
-        </p>
+        <p className={s.hint}>请先拷贝一个检查点并等待其就绪，然后才能运行推理。</p>
       )}
 
       <ErrorBanner error={inferencesError ?? checkpointsError ?? actionError} />
@@ -387,9 +424,9 @@ export default function InferencePanel({
       {inferencesLoading ? (
         <Spinner />
       ) : !inferences || inferences.length === 0 ? (
-        <div className="empty">No inferences yet.</div>
+        <div className={shared.empty}>还没有推理。</div>
       ) : (
-        <div className="col">
+        <div className={shared.col}>
           {inferences.map((inf) => (
             <InferenceCard
               key={inf.id}

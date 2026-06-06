@@ -1,18 +1,44 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  Badge,
+  Body1,
+  Body1Strong,
+  Button,
+  Card,
+  Field,
+  Input,
+  Textarea,
+  Title3,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
 import type { Project } from "../types";
 import { useAsync } from "../hooks";
-import {
-  ConfirmButton,
-  ErrorBanner,
-  Modal,
-  Spinner,
-  formatDate,
-} from "../components/ui";
+import { useSharedStyles } from "../theme/sharedStyles";
+import { ConfirmButton, ErrorBanner, Modal, Spinner, formatDate } from "../components/ui";
 
 const DELETE_MESSAGE =
-  "Delete this project? This permanently removes all of its experiments, checkpoints, inferences, and evaluations.";
+  "删除该项目？这将永久删除其所有实验、检查点、推理结果与评测记录。";
+
+const useStyles = makeStyles({
+  card: { cursor: "pointer" },
+  badgeRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
+    rowGap: tokens.spacingVerticalXS,
+  },
+  actions: {
+    display: "flex",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+    marginTop: tokens.spacingVerticalL,
+  },
+});
 
 function NewProjectModal({
   open,
@@ -23,6 +49,7 @@ function NewProjectModal({
   onClose: () => void;
   onCreated: (project: Project) => void;
 }) {
+  const s = useStyles();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
@@ -46,40 +73,33 @@ function NewProjectModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New Project">
+    <Modal open={open} onClose={onClose} title="新建项目">
       <form onSubmit={submit}>
         <ErrorBanner error={error} />
-        <div className="field">
-          <label htmlFor="project-name">Name</label>
-          <input
-            id="project-name"
+        <Field label="名称" required>
+          <Input
             value={name}
             autoFocus
             required
-            placeholder="My project"
-            onChange={(e) => setName(e.target.value)}
+            placeholder="我的项目"
+            onChange={(_, data) => setName(data.value)}
           />
-        </div>
-        <div className="field">
-          <label htmlFor="project-description">Description</label>
-          <textarea
-            id="project-description"
+        </Field>
+        <Field label="描述">
+          <Textarea
             value={description}
-            placeholder="What is this project about?"
-            onChange={(e) => setDescription(e.target.value)}
+            placeholder="这个项目是关于什么的？"
+            resize="vertical"
+            onChange={(_, data) => setDescription(data.value)}
           />
-        </div>
-        <div className="btn-row spread">
-          <button type="button" className="btn-sm" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={saving || !name.trim()}
-          >
-            {saving ? "Creating…" : "Create Project"}
-          </button>
+        </Field>
+        <div className={s.actions}>
+          <Button type="button" onClick={onClose} disabled={saving}>
+            取消
+          </Button>
+          <Button type="submit" appearance="primary" disabled={saving || !name.trim()}>
+            {saving ? "创建中…" : "创建项目"}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -95,31 +115,32 @@ function ProjectCard({
   onOpen: () => void;
   onDelete: () => void;
 }) {
+  const s = useStyles();
+  const shared = useSharedStyles();
   return (
-    <div className="card clickable" onClick={onOpen}>
-      <h3>{project.name}</h3>
-      <p className="muted">{project.description || "No description"}</p>
-      <div className="btn-row small">
-        <span className="badge">
-          <span className="dot" />
-          {project.vlm_model || "VLM not set"}
-        </span>
-        <span className="badge">
-          <span className="dot" />
+    <Card className={s.card} onClick={onOpen} focusMode="no-tab">
+      <Body1Strong>{project.name}</Body1Strong>
+      <Body1 className={shared.muted}>{project.description || "暂无描述"}</Body1>
+      <div className={s.badgeRow}>
+        <Badge appearance="outline" color="informative">
+          {project.vlm_model || "未设置 VLM"}
+        </Badge>
+        <Badge appearance="outline" color="informative">
           {formatDate(project.created_at)}
-        </span>
+        </Badge>
       </div>
-      <div className="btn-row" style={{ marginTop: 12 }} onClick={(e) => e.stopPropagation()}>
+      <div className={shared.btnRow} onClick={(e) => e.stopPropagation()}>
         <ConfirmButton message={DELETE_MESSAGE} onConfirm={onDelete}>
-          Delete
+          删除
         </ConfirmButton>
       </div>
-    </div>
+    </Card>
   );
 }
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
+  const shared = useSharedStyles();
   const { data, loading, error, reload } = useAsync(() => api.listProjects(), []);
   const [modalOpen, setModalOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -136,22 +157,22 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="container">
-      <div className="toolbar spread">
-        <h1>Projects</h1>
-        <button className="btn-primary" onClick={() => setModalOpen(true)}>
-          + New Project
-        </button>
+    <div className={shared.container}>
+      <div className={`${shared.toolbar} ${shared.spread}`}>
+        <Title3>项目</Title3>
+        <Button appearance="primary" icon={<Add20Regular />} onClick={() => setModalOpen(true)}>
+          新建项目
+        </Button>
       </div>
 
       <ErrorBanner error={error ?? actionError} />
 
       {loading ? (
-        <Spinner />
+        <Spinner label="加载中…" />
       ) : !data || data.length === 0 ? (
-        <div className="empty">No projects yet. Create one to get started.</div>
+        <div className={shared.empty}>还没有项目，点击右上角新建一个吧。</div>
       ) : (
-        <div className="grid">
+        <div className={shared.grid}>
           {data.map((project) => (
             <ProjectCard
               key={project.id}
