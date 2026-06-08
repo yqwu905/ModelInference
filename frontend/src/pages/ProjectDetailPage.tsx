@@ -8,6 +8,7 @@ import {
   Card,
   Field,
   Input,
+  Select,
   Subtitle2,
   Tab,
   TabList,
@@ -25,7 +26,7 @@ import {
 import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
 import { useAsync } from "../hooks";
-import type { Experiment, ExperimentInput, ParamDef, Project, ProjectInput } from "../types";
+import type { Experiment, ExperimentInput, Project, ProjectInput } from "../types";
 import {
   ConfirmButton,
   ErrorBanner,
@@ -324,10 +325,8 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
 
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
-  const [inferenceCommand, setInferenceCommand] = useState(project.inference_command);
-  const [inferenceWorkdir, setInferenceWorkdir] = useState(project.inference_workdir);
-  const [schemaText, setSchemaText] = useState(
-    JSON.stringify(project.inference_param_schema ?? [], null, 2)
+  const [defaultEngineId, setDefaultEngineId] = useState<number | null>(
+    project.default_engine_id,
   );
   const [vlmBaseUrl, setVlmBaseUrl] = useState(project.vlm_base_url);
   const [vlmModel, setVlmModel] = useState(project.vlm_model);
@@ -338,18 +337,45 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Global presets surfaced in project config.
+  const { data: engines } = useAsync(() => api.listInferenceEngines(), []);
+  const { data: vlmPresets } = useAsync(() => api.listVlmPresets(), []);
+  const [importing, setImporting] = useState(false);
+
+  const handleImportPreset = async (presetIdStr: string) => {
+    if (!presetIdStr) return;
+    setError(null);
+    setImporting(true);
+    try {
+      await api.applyVlmPreset(Number(presetIdStr), project.id);
+      await onSaved(); // reloads project -> useEffect re-syncs the VLM fields
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // 当项目（重新）加载时同步表单状态。
   useEffect(() => {
     setName(project.name);
     setDescription(project.description);
-    setInferenceCommand(project.inference_command);
-    setInferenceWorkdir(project.inference_workdir);
-    setSchemaText(JSON.stringify(project.inference_param_schema ?? [], null, 2));
+    setDefaultEngineId(project.default_engine_id);
     setVlmBaseUrl(project.vlm_base_url);
     setVlmModel(project.vlm_model);
     setVlmApiKey("");
     setEvalPrompt(project.eval_prompt);
   }, [project]);
+
+  // If the stored default engine was since deleted, drop the dangling id so the
+  // dropdown reflects reality and saving clears it (matches the run modal).
+  useEffect(() => {
+    if (!engines) return;
+    if (defaultEngineId != null && !engines.some((e) => e.id === defaultEngineId)) {
+      setDefaultEngineId(null);
+    }
+  }, [engines, defaultEngineId]);
 
   useEffect(() => {
     if (!saved) return;
@@ -358,25 +384,10 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
   }, [saved]);
 
   const handleSave = async () => {
-    let schema: ParamDef[];
-    try {
-      const parsed = JSON.parse(schemaText || "[]");
-      if (!Array.isArray(parsed)) {
-        setError("推理参数定义必须是一个 JSON 数组。");
-        return;
-      }
-      schema = parsed as ParamDef[];
-    } catch (e) {
-      setError(`推理参数定义 JSON 无效：${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-
     const payload: ProjectInput = {
       name,
       description,
-      inference_command: inferenceCommand,
-      inference_workdir: inferenceWorkdir,
-      inference_param_schema: schema,
+      default_engine_id: defaultEngineId,
       vlm_base_url: vlmBaseUrl,
       vlm_model: vlmModel,
       eval_prompt: evalPrompt,
@@ -418,42 +429,54 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
       </Card>
 
       <Card>
-        <Subtitle2>推理引擎</Subtitle2>
+        <Subtitle2>推理工程</Subtitle2>
         <Field
-          label="推理命令"
-          hint="令牌 {checkpoint} 与 {output_dir} 会自动填充；其他 {tokens} 来自推理参数。"
+          label="默认推理工程"
+          hint="运行推理时默认选用（仍可临时切换）；在“设置 → 推理工程”中管理。"
         >
-          <Textarea
-            className={shared.mono}
-            value={inferenceCommand}
-            resize="vertical"
-            rows={3}
-            onChange={(_, data) => setInferenceCommand(data.value)}
-          />
+          <Select
+            value={defaultEngineId == null ? "" : String(defaultEngineId)}
+            onChange={(_, data) =>
+              setDefaultEngineId(data.value ? Number(data.value) : null)
+            }
+          >
+            <option value="">（不指定）</option>
+            {(engines ?? []).map((engine) => (
+              <option key={engine.id} value={String(engine.id)}>
+                {engine.name}
+              </option>
+            ))}
+          </Select>
         </Field>
-        <Field label="推理工作目录">
-          <Input
-            value={inferenceWorkdir}
-            placeholder="命令的工作目录（可选）"
-            onChange={(_, data) => setInferenceWorkdir(data.value)}
-          />
-        </Field>
-        <Field
-          label="推理参数定义 (JSON)"
-          hint="由 { name, label, type, default?, options? } 参数定义组成的数组。"
-        >
-          <Textarea
-            className={shared.mono}
-            value={schemaText}
-            resize="vertical"
-            rows={8}
-            onChange={(_, data) => setSchemaText(data.value)}
-          />
-        </Field>
+        {(!engines || engines.length === 0) && (
+          <Body1 className={`${shared.muted} ${shared.small}`}>
+            还没有推理工程，请先在“设置 → 推理工程”中创建。
+          </Body1>
+        )}
       </Card>
 
       <Card>
         <Subtitle2>VLM 评测</Subtitle2>
+        {vlmPresets && vlmPresets.length > 0 && (
+          <Field
+            label="从预设导入"
+            hint="选择后立即将预设的接口地址、模型与密钥写入本项目。"
+          >
+            <Select
+              value=""
+              disabled={importing}
+              onChange={(_, data) => void handleImportPreset(data.value)}
+            >
+              <option value="">{importing ? "导入中…" : "选择 VLM 预设…"}</option>
+              {vlmPresets.map((preset) => (
+                <option key={preset.id} value={String(preset.id)}>
+                  {preset.name}
+                  {preset.model ? ` (${preset.model})` : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <div className={mergeClasses(shared.row, shared.wrap)}>
           <Field className={shared.grow} label="VLM 接口地址">
             <Input

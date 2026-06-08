@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from .. import cascade, config, jobs
 from ..db import get_session
-from ..models import Checkpoint, Inference
+from ..models import Checkpoint, Inference, InferenceEngine
 from ..schemas import InferenceCreate, InferenceUpdate
 from ..serializers import inference_out
 from ..services import inference_service
@@ -53,11 +53,22 @@ def create_inference(
     if checkpoint.status != "ready":
         raise HTTPException(409, "checkpoint not ready")
 
+    # Snapshot the chosen engine's command/workdir so the run is reproducible
+    # even if the engine is later edited or deleted. Without an engine, the run
+    # falls back to the project's legacy inference config.
+    engine = None
+    if body.engine_id is not None:
+        engine = session.get(InferenceEngine, body.engine_id)
+        if engine is None:
+            raise HTTPException(404, "engine not found")
+
     inference = Inference(
         checkpoint_id=checkpoint_id,
         experiment_id=checkpoint.experiment_id,
         name=body.name,
         params=json.dumps(body.params),
+        command=engine.command if engine else "",
+        workdir=engine.workdir if engine else "",
         status="running",
     )
     session.add(inference)

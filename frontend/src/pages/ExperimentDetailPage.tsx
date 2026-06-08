@@ -6,14 +6,12 @@ import {
   BreadcrumbButton,
   BreadcrumbDivider,
   BreadcrumbItem,
-  Button,
   Card,
   Subtitle2,
   Title3,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { ArrowRight20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
 import type { Project } from "../types";
 import { useAsync } from "../hooks";
@@ -96,16 +94,7 @@ export default function ExperimentDetailPage() {
         </BreadcrumbItem>
       </Breadcrumb>
 
-      <div className={`${shared.toolbar} ${shared.spread}`}>
-        <Title3>{experiment.name}</Title3>
-        <Button
-          icon={<ArrowRight20Regular />}
-          iconPosition="after"
-          onClick={() => navigate(`/experiments/${experimentId}/compare`)}
-        >
-          对比推理
-        </Button>
-      </div>
+      <Title3>{experiment.name}</Title3>
 
       {experiment.description && (
         <Body1 className={shared.muted}>{experiment.description}</Body1>

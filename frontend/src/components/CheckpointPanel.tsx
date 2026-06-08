@@ -5,6 +5,7 @@ import {
   Card,
   Field,
   Input,
+  Select,
   Subtitle2,
   makeStyles,
   tokens,
@@ -70,9 +71,11 @@ function CopyCheckpointModal({
 }) {
   const s = useStyles();
   const shared = useSharedStyles();
+  const { data: servers } = useAsync(() => api.listServers(), []);
   const [displayName, setDisplayName] = useState("");
   const [sourceHost, setSourceHost] = useState("");
   const [sourcePath, setSourcePath] = useState("");
+  const [serverId, setServerId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,8 +83,19 @@ function CopyCheckpointModal({
     setDisplayName("");
     setSourceHost("");
     setSourcePath("");
+    setServerId("");
     setError(null);
     setSaving(false);
+  };
+
+  // Picking a saved server prefills host + path (still editable below).
+  const pickServer = (id: string) => {
+    setServerId(id);
+    const srv = (servers ?? []).find((x) => String(x.id) === id);
+    if (srv) {
+      setSourceHost(srv.host);
+      setSourcePath(srv.default_path);
+    }
   };
 
   const close = () => {
@@ -121,11 +135,27 @@ function CopyCheckpointModal({
             onChange={(_, data) => setDisplayName(data.value)}
           />
         </Field>
+        {servers && servers.length > 0 && (
+          <Field label="从服务器选择（可选）">
+            <Select value={serverId} onChange={(_, data) => pickServer(data.value)}>
+              <option value="">手动输入…</option>
+              {servers.map((srv) => (
+                <option key={srv.id} value={String(srv.id)}>
+                  {srv.name}
+                  {srv.host ? ` (${srv.host})` : "（本地）"}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="SSH 主机(user@host) — 留空则从本地路径拷贝">
           <Input
             value={sourceHost}
             placeholder="user@gpu-box"
-            onChange={(_, data) => setSourceHost(data.value)}
+            onChange={(_, data) => {
+              setServerId("");
+              setSourceHost(data.value);
+            }}
           />
         </Field>
         <Field label="源路径" required>

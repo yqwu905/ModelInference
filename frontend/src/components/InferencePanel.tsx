@@ -13,7 +13,7 @@ import {
 } from "@fluentui/react-components";
 import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
-import type { Checkpoint, Inference, ParamDef, Project } from "../types";
+import type { Checkpoint, Inference, InferenceEngine, Project } from "../types";
 import { useAsync, usePolling } from "../hooks";
 import {
   ConfirmButton,
@@ -48,8 +48,12 @@ const useStyles = makeStyles({
   },
 });
 
-function paramDefault(def: ParamDef): string {
-  return String(def.default ?? "");
+/** An engine's params (key/value defaults) as string-valued form state. */
+function engineParamValues(engine: InferenceEngine | null): Record<string, string> {
+  if (!engine) return {};
+  return Object.fromEntries(
+    Object.entries(engine.params ?? {}).map(([k, v]) => [k, v == null ? "" : String(v)]),
+  );
 }
 
 function ImagesModal({
@@ -172,52 +176,58 @@ function RenameInferenceModal({
 
 function RunInferenceModal({
   open,
-  project,
+  engines,
+  defaultEngineId,
   readyCheckpoints,
   defaultName,
   onClose,
   onCreated,
 }: {
   open: boolean;
-  project: Project;
+  engines: InferenceEngine[];
+  defaultEngineId: number | null;
   readyCheckpoints: Checkpoint[];
   defaultName: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const s = useStyles();
-  const schema = project.inference_param_schema;
+  const initialEngineId =
+    (defaultEngineId != null && engines.some((e) => e.id === defaultEngineId)
+      ? defaultEngineId
+      : engines[0]?.id) ?? "";
   const [checkpointId, setCheckpointId] = useState<number | "">(
     readyCheckpoints[0]?.id ?? "",
   );
+  const [engineId, setEngineId] = useState<number | "">(initialEngineId);
   const [name, setName] = useState(defaultName);
   const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(schema.map((def) => [def.name, paramDefault(def)])),
+    engineParamValues(engines.find((e) => e.id === initialEngineId) ?? null),
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const selectedEngine = engines.find((e) => e.id === engineId) ?? null;
+  const paramKeys = selectedEngine ? Object.keys(selectedEngine.params ?? {}) : [];
+
+  // Switching engines re-seeds the param inputs with that engine's defaults.
+  const pickEngine = (idStr: string) => {
+    const id = idStr ? Number(idStr) : "";
+    setEngineId(id);
+    setValues(engineParamValues(engines.find((e) => e.id === id) ?? null));
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (checkpointId === "" || !name.trim()) return;
+    if (checkpointId === "" || engineId === "" || !name.trim()) return;
     setSaving(true);
     setError(null);
     try {
-      const params: Record<string, unknown> = {};
-      for (const def of schema) {
-        if (def.type === "number") {
-          // 空白/非法数字一律跳过，而不是发送 0（Number("")）或
-          // null（Number("abc")）；后端会因此保留其 {token} 占位符。
-          const trimmed = (values[def.name] ?? "").trim();
-          if (trimmed === "") continue;
-          const n = Number(trimmed);
-          if (Number.isNaN(n)) continue;
-          params[def.name] = n;
-        } else {
-          params[def.name] = values[def.name] ?? "";
-        }
-      }
-      await api.createInference(checkpointId, { name: name.trim(), params });
+      await api.createInference(checkpointId, {
+        name: name.trim(),
+        params: { ...values },
+        engine_id: engineId,
+      });
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -244,43 +254,32 @@ function RunInferenceModal({
             ))}
           </Select>
         </Field>
-        <Field label="名称" required>
-          <Input
-            value={name}
+        <Field label="推理工程" required>
+          <Select
+            value={engineId === "" ? "" : String(engineId)}
             required
-            onChange={(_, data) => setName(data.value)}
-          />
+            onChange={(_, data) => pickEngine(data.value)}
+          >
+            {engines.map((e) => (
+              <option key={e.id} value={String(e.id)}>
+                {e.name}
+              </option>
+            ))}
+          </Select>
         </Field>
-        {schema.map((def) => {
-          const value = values[def.name] ?? "";
-          const onChange = (v: string) =>
-            setValues((prev) => ({ ...prev, [def.name]: v }));
-          return (
-            <Field label={def.label} key={def.name}>
-              {def.type === "select" ? (
-                <Select value={value} onChange={(_, data) => onChange(data.value)}>
-                  {(def.options ?? []).map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </Select>
-              ) : def.type === "number" ? (
-                <Input
-                  type="number"
-                  value={value}
-                  onChange={(_, data) => onChange(data.value)}
-                />
-              ) : (
-                <Input
-                  type="text"
-                  value={value}
-                  onChange={(_, data) => onChange(data.value)}
-                />
-              )}
-            </Field>
-          );
-        })}
+        <Field label="名称" required>
+          <Input value={name} required onChange={(_, data) => setName(data.value)} />
+        </Field>
+        {paramKeys.map((key) => (
+          <Field label={key} key={key}>
+            <Input
+              value={values[key] ?? ""}
+              onChange={(_, data) =>
+                setValues((prev) => ({ ...prev, [key]: data.value }))
+              }
+            />
+          </Field>
+        ))}
         <div className={s.actions}>
           <Button type="button" onClick={onClose} disabled={saving}>
             取消
@@ -288,7 +287,7 @@ function RunInferenceModal({
           <Button
             type="submit"
             appearance="primary"
-            disabled={saving || checkpointId === "" || !name.trim()}
+            disabled={saving || checkpointId === "" || engineId === "" || !name.trim()}
           >
             {saving ? "开始中…" : "运行推理"}
           </Button>
@@ -372,6 +371,11 @@ export default function InferencePanel({
     error: checkpointsError,
     reload: reloadCheckpoints,
   } = useAsync(() => api.listCheckpoints(experimentId), [experimentId]);
+  const {
+    data: engines,
+    error: enginesError,
+    reload: reloadEngines,
+  } = useAsync(() => api.listInferenceEngines(), []);
 
   const [runOpen, setRunOpen] = useState(false);
   const [viewing, setViewing] = useState<Inference | null>(null);
@@ -384,7 +388,8 @@ export default function InferencePanel({
   usePolling(reloadInferences, anyRunning, 2000);
 
   const readyCheckpoints = (checkpoints ?? []).filter((c) => c.status === "ready");
-  const canRun = readyCheckpoints.length > 0;
+  const hasEngines = (engines?.length ?? 0) > 0;
+  const canRun = readyCheckpoints.length > 0 && hasEngines;
 
   const handleDelete = async (id: number) => {
     setActionError(null);
@@ -408,6 +413,7 @@ export default function InferencePanel({
           disabled={!canRun}
           onClick={() => {
             void reloadCheckpoints();
+            void reloadEngines();
             setRunOpen(true);
           }}
         >
@@ -415,11 +421,14 @@ export default function InferencePanel({
         </Button>
       </div>
 
-      {!canRun && (
+      {readyCheckpoints.length === 0 && (
         <p className={s.hint}>请先拷贝一个检查点并等待其就绪，然后才能运行推理。</p>
       )}
+      {readyCheckpoints.length > 0 && !hasEngines && (
+        <p className={s.hint}>请先在“设置 → 推理工程”中创建一个推理工程，然后才能运行推理。</p>
+      )}
 
-      <ErrorBanner error={inferencesError ?? checkpointsError ?? actionError} />
+      <ErrorBanner error={inferencesError ?? checkpointsError ?? enginesError ?? actionError} />
 
       {inferencesLoading ? (
         <Spinner />
@@ -442,7 +451,8 @@ export default function InferencePanel({
       {runOpen && (
         <RunInferenceModal
           open={runOpen}
-          project={project}
+          engines={engines ?? []}
+          defaultEngineId={project.default_engine_id}
           readyCheckpoints={readyCheckpoints}
           defaultName={defaultName}
           onClose={() => setRunOpen(false)}

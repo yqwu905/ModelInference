@@ -15,7 +15,14 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, jobs
 from .db import init_db
-from .routers import checkpoints, evaluations, experiments, inferences, projects
+from .routers import (
+    checkpoints,
+    evaluations,
+    experiments,
+    inferences,
+    projects,
+    settings,
+)
 
 
 @asynccontextmanager
@@ -42,6 +49,7 @@ app.include_router(experiments.router)
 app.include_router(checkpoints.router)
 app.include_router(inferences.router)
 app.include_router(evaluations.router)
+app.include_router(settings.router)
 
 
 @app.get("/api/health")
