@@ -17,6 +17,7 @@ export interface Project {
   inference_command: string;
   inference_workdir: string;
   inference_param_schema: ParamDef[];
+  default_engine_id: number | null;
   vlm_base_url: string;
   vlm_model: string;
   vlm_api_key_set: boolean;
@@ -58,6 +59,9 @@ export interface Inference {
   experiment_id: number;
   name: string;
   params: Record<string, unknown>;
+  // Command/workdir snapshotted from the engine at creation (empty for legacy rows).
+  command: string;
+  workdir: string;
   status: InferenceStatus;
   output_dir: string;
   log: string;
@@ -92,6 +96,8 @@ export interface ProjectInput {
   inference_command?: string;
   inference_workdir?: string;
   inference_param_schema?: ParamDef[];
+  // null clears the project's default engine.
+  default_engine_id?: number | null;
   vlm_base_url?: string;
   vlm_api_key?: string;
   vlm_model?: string;
@@ -113,4 +119,57 @@ export interface CheckpointInput {
 export interface InferenceInput {
   name: string;
   params: Record<string, unknown>;
+  // Global engine to run with; its command/workdir are snapshotted server-side.
+  engine_id?: number;
+}
+
+// ---- global settings ----
+export interface ServerConfig {
+  id: number;
+  name: string;
+  host: string;
+  default_path: string;
+  description: string;
+  created_at: string;
+}
+
+export interface ServerInput {
+  name: string;
+  host?: string;
+  default_path?: string;
+  description?: string;
+}
+
+export interface VlmPreset {
+  id: number;
+  name: string;
+  base_url: string;
+  model: string;
+  api_key_set: boolean;
+  created_at: string;
+}
+
+export interface VlmPresetInput {
+  name: string;
+  base_url?: string;
+  model?: string;
+  // Provided non-empty => set; omitted => keep existing key on update.
+  api_key?: string;
+}
+
+export interface InferenceEngine {
+  id: number;
+  name: string;
+  command: string;
+  workdir: string;
+  // Parameter defaults as plain key/value pairs (not a typed schema).
+  params: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface InferenceEngineInput {
+  name: string;
+  command?: string;
+  workdir?: string;
+  params?: Record<string, unknown>;
 }

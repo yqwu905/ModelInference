@@ -27,10 +27,17 @@ class Project(SQLModel, table=True):
     # Inference engine configuration.
     # Command template; {checkpoint} and {output_dir} are always substituted,
     # other {tokens} come from per-run inference parameters.
+    # Legacy per-project inference engine config. The inference engine is now a
+    # reusable global preset (InferenceEngine); these are kept only as a fallback
+    # for inferences created before the migration. New runs snapshot the chosen
+    # engine onto the Inference row instead.
     inference_command: str = ""
     inference_workdir: str = ""
     # JSON list of {name,label,type,default,options?} param definitions.
     inference_param_schema: str = "[]"
+    # Default global inference engine for this project (nullable; no hard FK so
+    # an engine can be deleted freely). Pre-selected when running an inference.
+    default_engine_id: Optional[int] = Field(default=None)
 
     # VLM / evaluation configuration (any OpenAI-compatible chat API).
     vlm_base_url: str = ""
@@ -77,6 +84,11 @@ class Inference(SQLModel, table=True):
     name: str
     # JSON object of inference hyperparameters.
     params: str = "{}"
+    # Command/workdir snapshotted from the chosen InferenceEngine at creation so
+    # the run is reproducible even if the engine is later edited or deleted.
+    # Empty => fall back to the project's legacy inference_command/workdir.
+    command: str = ""
+    workdir: str = ""
     status: str = "pending"        # pending | running | done | failed
     output_dir: str = ""
     log: str = ""
@@ -92,4 +104,47 @@ class Evaluation(SQLModel, table=True):
     # JSON object: {"winner","score_a","score_b","reason", "raw"?}
     result: str = "{}"
     error: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Global settings (standalone tables, no FK into the project hierarchy).
+# Reusable presets surfaced in the Settings page: SSH servers for quick-picking
+# a checkpoint copy source, and VLM endpoints importable into a project's
+# evaluation config.
+# ---------------------------------------------------------------------------
+
+
+class ServerConfig(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str                      # display label, e.g. "GPU box A"
+    host: str = ""                 # user@host or host (empty => local copies)
+    default_path: str = ""         # prefill for a checkpoint's source_path
+    description: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class VlmPreset(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    base_url: str = ""
+    model: str = ""
+    # Write-only, like Project.vlm_api_key: redacted to a boolean on read.
+    api_key: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class InferenceEngine(SQLModel, table=True):
+    """Reusable inference engine ("推理工程"): a command template + workdir + the
+    parameter defaults exposed when running an inference. Parameters are simple
+    key/value pairs (a JSON object), not a typed schema."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    # Command template; {checkpoint} and {output_dir} are always substituted,
+    # other {tokens} come from the per-run inference parameters.
+    command: str = ""
+    workdir: str = ""
+    # JSON object of {param_name: default_value} key/value pairs.
+    params: str = "{}"
     created_at: datetime = Field(default_factory=_utcnow)

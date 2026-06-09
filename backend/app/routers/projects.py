@@ -81,10 +81,11 @@ def update_project(
 
     data = body.model_dump(exclude_unset=True)
     for key, value in data.items():
-        # None is never a legal value for these NOT NULL columns (strings are
-        # cleared with "", the param schema is always an array). Skip explicit
-        # nulls so a malformed PUT is a no-op rather than a 500 / corrupted row.
-        if value is None:
+        # None is never a legal value for the NOT NULL columns (strings are
+        # cleared with "", the param schema is always an array), so skip explicit
+        # nulls — except default_engine_id, which is nullable and an explicit
+        # null clears the project's default engine.
+        if value is None and key != "default_engine_id":
             continue
         if key == "inference_param_schema":
             setattr(project, key, json.dumps(value))

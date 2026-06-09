@@ -7,8 +7,14 @@ import type {
   ExperimentInput,
   Inference,
   InferenceInput,
+  InferenceEngine,
+  InferenceEngineInput,
   Project,
   ProjectInput,
+  ServerConfig,
+  ServerInput,
+  VlmPreset,
+  VlmPresetInput,
 } from "./types";
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -88,4 +94,33 @@ export const api = {
     req<Evaluation[]>("GET", `/api/projects/${projectId}/evaluations`),
   findEvaluation: (aId: number, bId: number) =>
     req<Evaluation>("GET", `/api/evaluations?a=${aId}&b=${bId}`),
+
+  // Settings: servers
+  listServers: () => req<ServerConfig[]>("GET", "/api/settings/servers"),
+  createServer: (body: ServerInput) =>
+    req<ServerConfig>("POST", "/api/settings/servers", body),
+  updateServer: (id: number, body: ServerInput) =>
+    req<ServerConfig>("PUT", `/api/settings/servers/${id}`, body),
+  deleteServer: (id: number) => req<void>("DELETE", `/api/settings/servers/${id}`),
+
+  // Settings: VLM presets
+  listVlmPresets: () => req<VlmPreset[]>("GET", "/api/settings/vlm-presets"),
+  createVlmPreset: (body: VlmPresetInput) =>
+    req<VlmPreset>("POST", "/api/settings/vlm-presets", body),
+  updateVlmPreset: (id: number, body: VlmPresetInput) =>
+    req<VlmPreset>("PUT", `/api/settings/vlm-presets/${id}`, body),
+  deleteVlmPreset: (id: number) =>
+    req<void>("DELETE", `/api/settings/vlm-presets/${id}`),
+  applyVlmPreset: (presetId: number, projectId: number) =>
+    req<Project>("POST", `/api/settings/vlm-presets/${presetId}/apply/${projectId}`),
+
+  // Settings: inference engines（推理工程）
+  listInferenceEngines: () =>
+    req<InferenceEngine[]>("GET", "/api/settings/inference-engines"),
+  createInferenceEngine: (body: InferenceEngineInput) =>
+    req<InferenceEngine>("POST", "/api/settings/inference-engines", body),
+  updateInferenceEngine: (id: number, body: InferenceEngineInput) =>
+    req<InferenceEngine>("PUT", `/api/settings/inference-engines/${id}`, body),
+  deleteInferenceEngine: (id: number) =>
+    req<void>("DELETE", `/api/settings/inference-engines/${id}`),
 };

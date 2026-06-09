@@ -1,8 +1,10 @@
 """Inference run execution (background job).
 
-Builds a shell command from the project's ``inference_command`` template via
-safe substitution (unknown ``{tokens}`` are left intact), runs it, and records
-stdout/stderr plus the terminal status on the Inference row.
+Builds a shell command from the inference's snapshotted ``command`` template
+(taken from the chosen InferenceEngine at creation; falls back to the project's
+legacy ``inference_command``) via safe substitution (unknown ``{tokens}`` are
+left intact), runs it, and records stdout/stderr plus the terminal status on the
+Inference row.
 """
 from __future__ import annotations
 
@@ -52,10 +54,19 @@ def run_inference(inference_id: int) -> None:
                 "checkpoint": checkpoint.local_path if checkpoint else "",
                 "output_dir": inference.output_dir,
             }
-            command = _render(project.inference_command, subst) if project else ""
+            # Prefer the engine snapshot taken at creation; fall back to the
+            # project's legacy config for inferences created before engines.
+            template = inference.command or (
+                project.inference_command if project else ""
+            )
+            command = _render(template, subst)
 
             Path(inference.output_dir).mkdir(parents=True, exist_ok=True)
-            workdir = (project.inference_workdir or None) if project else None
+            workdir = (
+                inference.workdir
+                or (project.inference_workdir if project else "")
+                or None
+            )
 
             result = subprocess.run(
                 command,

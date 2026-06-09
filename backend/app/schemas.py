@@ -30,6 +30,8 @@ class ProjectUpdate(BaseModel):
     inference_command: Optional[str] = None
     inference_workdir: Optional[str] = None
     inference_param_schema: Optional[list[dict[str, Any]]] = None
+    # Nullable on purpose: an explicit null clears the project's default engine.
+    default_engine_id: Optional[int] = None
     vlm_base_url: Optional[str] = None
     vlm_api_key: Optional[str] = None
     vlm_model: Optional[str] = None
@@ -65,6 +67,9 @@ class CheckpointUpdate(BaseModel):
 class InferenceCreate(BaseModel):
     name: str
     params: dict[str, Any] = {}
+    # Global inference engine to run with; its command/workdir are snapshotted
+    # onto the inference. Omitted => fall back to the project's legacy config.
+    engine_id: Optional[int] = None
 
 
 class InferenceUpdate(BaseModel):
@@ -76,3 +81,49 @@ class EvaluationCreate(BaseModel):
     project_id: int
     inference_a_id: int
     inference_b_id: int
+
+
+# ---- Settings: servers ----
+class ServerCreate(BaseModel):
+    name: str
+    host: str = ""
+    default_path: str = ""
+    description: str = ""
+
+
+class ServerUpdate(BaseModel):
+    name: Optional[str] = None
+    host: Optional[str] = None
+    default_path: Optional[str] = None
+    description: Optional[str] = None
+
+
+# ---- Settings: VLM presets ----
+class VlmPresetCreate(BaseModel):
+    name: str
+    base_url: str = ""
+    model: str = ""
+    api_key: Optional[str] = None
+
+
+class VlmPresetUpdate(BaseModel):
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    # Provided non-empty => set; "" => clear; omitted => keep (handled in router).
+    api_key: Optional[str] = None
+
+
+# ---- Settings: inference engines ----
+class InferenceEngineCreate(BaseModel):
+    name: str
+    command: str = ""
+    workdir: str = ""
+    params: dict[str, Any] = {}
+
+
+class InferenceEngineUpdate(BaseModel):
+    name: Optional[str] = None
+    command: Optional[str] = None
+    workdir: Optional[str] = None
+    params: Optional[dict[str, Any]] = None

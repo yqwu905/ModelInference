@@ -8,7 +8,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .models import Checkpoint, Evaluation, Experiment, Inference, Project
+from .models import (
+    Checkpoint,
+    Evaluation,
+    Experiment,
+    Inference,
+    InferenceEngine,
+    Project,
+    ServerConfig,
+    VlmPreset,
+)
 
 
 def _loads(value: str, fallback: Any) -> Any:
@@ -26,6 +35,7 @@ def project_out(p: Project) -> dict[str, Any]:
         "inference_command": p.inference_command,
         "inference_workdir": p.inference_workdir,
         "inference_param_schema": _loads(p.inference_param_schema, []),
+        "default_engine_id": p.default_engine_id,
         "vlm_base_url": p.vlm_base_url,
         "vlm_model": p.vlm_model,
         # Never return the raw key; expose only whether one is configured.
@@ -70,6 +80,8 @@ def inference_out(i: Inference) -> dict[str, Any]:
         "experiment_id": i.experiment_id,
         "name": i.name,
         "params": _loads(i.params, {}),
+        "command": i.command,
+        "workdir": i.workdir,
         "status": i.status,
         "output_dir": i.output_dir,
         "log": i.log,
@@ -87,4 +99,38 @@ def evaluation_out(ev: Evaluation) -> dict[str, Any]:
         "result": _loads(ev.result, {}),
         "error": ev.error,
         "created_at": ev.created_at.isoformat(),
+    }
+
+
+def server_out(s: ServerConfig) -> dict[str, Any]:
+    return {
+        "id": s.id,
+        "name": s.name,
+        "host": s.host,
+        "default_path": s.default_path,
+        "description": s.description,
+        "created_at": s.created_at.isoformat(),
+    }
+
+
+def vlm_preset_out(p: VlmPreset) -> dict[str, Any]:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "base_url": p.base_url,
+        "model": p.model,
+        # Never return the raw key; expose only whether one is configured.
+        "api_key_set": bool(p.api_key),
+        "created_at": p.created_at.isoformat(),
+    }
+
+
+def inference_engine_out(e: InferenceEngine) -> dict[str, Any]:
+    return {
+        "id": e.id,
+        "name": e.name,
+        "command": e.command,
+        "workdir": e.workdir,
+        "params": _loads(e.params, {}),
+        "created_at": e.created_at.isoformat(),
     }

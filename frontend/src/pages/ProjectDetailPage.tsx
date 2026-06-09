@@ -1,8 +1,32 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  Badge,
+  Body1,
+  Body1Strong,
+  Button,
+  Card,
+  Field,
+  Input,
+  Select,
+  Subtitle2,
+  Tab,
+  TabList,
+  Textarea,
+  Title3,
+  Breadcrumb,
+  BreadcrumbButton,
+  BreadcrumbDivider,
+  BreadcrumbItem,
+  Caption1,
+  makeStyles,
+  mergeClasses,
+  tokens,
+} from "@fluentui/react-components";
+import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
 import { useAsync } from "../hooks";
-import type { Experiment, ExperimentInput, ParamDef, Project, ProjectInput } from "../types";
+import type { Experiment, ExperimentInput, Project, ProjectInput } from "../types";
 import {
   ConfirmButton,
   ErrorBanner,
@@ -10,31 +34,48 @@ import {
   Modal,
   Spinner,
 } from "../components/ui";
+import { useSharedStyles } from "../theme/sharedStyles";
 
-type Tab = "experiments" | "settings";
+type TabValue = "experiments" | "settings";
+
+const useStyles = makeStyles({
+  card: { cursor: "pointer" },
+  tabs: { marginBottom: tokens.spacingVerticalL },
+  cardTitleRow: { marginBottom: tokens.spacingVerticalS },
+  actions: {
+    display: "flex",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+    marginTop: tokens.spacingVerticalL,
+  },
+});
 
 export default function ProjectDetailPage() {
   const { projectId: projectIdParam } = useParams();
   const projectId = Number(projectIdParam);
   const navigate = useNavigate();
+  const shared = useSharedStyles();
+  const s = useStyles();
 
   const project = useAsync<Project>(() => api.getProject(projectId), [projectId]);
   const experiments = useAsync<Experiment[]>(() => api.listExperiments(projectId), [projectId]);
 
-  const [tab, setTab] = useState<Tab>("experiments");
+  const [tab, setTab] = useState<TabValue>("experiments");
 
   if (project.loading && !project.data) {
     return (
-      <div className="container">
-        <Spinner />
+      <div className={shared.container}>
+        <Spinner label="加载中…" />
       </div>
     );
   }
   if (project.error || !project.data) {
     return (
-      <div className="container">
-        <ErrorBanner error={project.error ?? "Project not found"} />
-        <Link to="/">Back to projects</Link>
+      <div className={shared.container}>
+        <ErrorBanner error={project.error ?? "未找到项目"} />
+        <Button appearance="transparent" onClick={() => navigate("/")}>
+          返回项目列表
+        </Button>
       </div>
     );
   }
@@ -42,27 +83,27 @@ export default function ProjectDetailPage() {
   const proj = project.data;
 
   return (
-    <div className="container">
-      <div className="breadcrumbs">
-        <Link to="/">Projects</Link> / {proj.name}
-      </div>
+    <div className={shared.container}>
+      <Breadcrumb>
+        <BreadcrumbItem>
+          <BreadcrumbButton onClick={() => navigate("/")}>项目</BreadcrumbButton>
+        </BreadcrumbItem>
+        <BreadcrumbDivider />
+        <BreadcrumbItem>
+          <BreadcrumbButton current>{proj.name}</BreadcrumbButton>
+        </BreadcrumbItem>
+      </Breadcrumb>
 
-      <h1>{proj.name}</h1>
+      <Title3>{proj.name}</Title3>
 
-      <div className="tabs">
-        <div
-          className={`tab${tab === "experiments" ? " active" : ""}`}
-          onClick={() => setTab("experiments")}
-        >
-          Experiments
-        </div>
-        <div
-          className={`tab${tab === "settings" ? " active" : ""}`}
-          onClick={() => setTab("settings")}
-        >
-          Settings
-        </div>
-      </div>
+      <TabList
+        className={s.tabs}
+        selectedValue={tab}
+        onTabSelect={(_, d) => setTab(d.value as TabValue)}
+      >
+        <Tab value="experiments">实验</Tab>
+        <Tab value="settings">设置</Tab>
+      </TabList>
 
       {tab === "experiments" ? (
         <ExperimentsTab
@@ -81,7 +122,7 @@ export default function ProjectDetailPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Experiments tab
+// 实验标签页
 // ---------------------------------------------------------------------------
 
 function ExperimentsTab(props: {
@@ -93,61 +134,66 @@ function ExperimentsTab(props: {
   onOpen: (id: number) => void;
 }) {
   const { projectId, experiments, loading, error, reload, onOpen } = props;
+  const shared = useSharedStyles();
+  const s = useStyles();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Experiment | null>(null);
 
   return (
     <div>
-      <div className="toolbar">
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          + New Experiment
-        </button>
+      <div className={shared.toolbar}>
+        <Button
+          appearance="primary"
+          icon={<Add20Regular />}
+          onClick={() => setCreating(true)}
+        >
+          新建实验
+        </Button>
       </div>
 
       <ErrorBanner error={error} />
 
       {loading && experiments.length === 0 ? (
-        <Spinner />
+        <Spinner label="加载中…" />
       ) : experiments.length === 0 ? (
-        <div className="empty">
-          <h3>No experiments yet</h3>
-          <p className="muted">Create an experiment to organise checkpoints and inferences.</p>
-        </div>
+        <div className={shared.empty}>还没有实验，创建一个实验来组织检查点与推理吧。</div>
       ) : (
-        <div className="grid">
+        <div className={shared.grid}>
           {experiments.map((e) => {
             const paramCount = Object.keys(e.hyperparameters ?? {}).length;
             return (
-              <div key={e.id} className="card clickable" onClick={() => onOpen(e.id)}>
-                <h3>{e.name}</h3>
-                {e.description && <p className="muted">{e.description}</p>}
-                <p className="small muted">
-                  {paramCount} hyperparameter{paramCount === 1 ? "" : "s"} ·{" "}
-                  {formatDate(e.created_at)}
-                </p>
-                <div className="btn-row">
-                  <button
-                    className="btn-sm"
+              <Card
+                key={e.id}
+                className={s.card}
+                onClick={() => onOpen(e.id)}
+                focusMode="no-tab"
+              >
+                <Body1Strong>{e.name}</Body1Strong>
+                {e.description && <Body1 className={shared.muted}>{e.description}</Body1>}
+                <Caption1 className={shared.muted}>
+                  {paramCount} 个超参数 · {formatDate(e.created_at)}
+                </Caption1>
+                <div className={shared.btnRow} onClick={(ev) => ev.stopPropagation()}>
+                  <Button
+                    size="small"
                     onClick={(ev) => {
                       ev.stopPropagation();
                       setEditing(e);
                     }}
                   >
-                    Edit
-                  </button>
-                  <span onClick={(ev) => ev.stopPropagation()}>
-                    <ConfirmButton
-                      message={`Delete experiment "${e.name}"? This removes its checkpoints and inferences.`}
-                      onConfirm={async () => {
-                        await api.deleteExperiment(e.id);
-                        await reload();
-                      }}
-                    >
-                      Delete
-                    </ConfirmButton>
-                  </span>
+                    编辑
+                  </Button>
+                  <ConfirmButton
+                    message={`删除实验「${e.name}」？这将一并删除其检查点与推理结果。`}
+                    onConfirm={async () => {
+                      await api.deleteExperiment(e.id);
+                      await reload();
+                    }}
+                  >
+                    删除
+                  </ConfirmButton>
                 </div>
-              </div>
+              </Card>
             );
           })}
         </div>
@@ -155,7 +201,7 @@ function ExperimentsTab(props: {
 
       {creating && (
         <ExperimentModal
-          title="New Experiment"
+          title="新建实验"
           onClose={() => setCreating(false)}
           onSubmit={async (input) => {
             await api.createExperiment(projectId, input);
@@ -167,7 +213,7 @@ function ExperimentsTab(props: {
 
       {editing && (
         <ExperimentModal
-          title="Edit Experiment"
+          title="编辑实验"
           initial={editing}
           onClose={() => setEditing(null)}
           onSubmit={async (input) => {
@@ -188,6 +234,8 @@ function ExperimentModal(props: {
   onSubmit: (input: ExperimentInput) => Promise<void>;
 }) {
   const { title, initial, onClose, onSubmit } = props;
+  const shared = useSharedStyles();
+  const s = useStyles();
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [hyperText, setHyperText] = useState(
@@ -196,21 +244,22 @@ function ExperimentModal(props: {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (ev: React.FormEvent) => {
+    ev.preventDefault();
     if (!name.trim()) {
-      setError("Name is required.");
+      setError("名称为必填项。");
       return;
     }
     let hyperparameters: Record<string, unknown>;
     try {
       const parsed = JSON.parse(hyperText || "{}");
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setError("Hyperparameters must be a JSON object.");
+        setError("超参数必须是一个 JSON 对象。");
         return;
       }
       hyperparameters = parsed as Record<string, unknown>;
     } catch (e) {
-      setError(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`JSON 无效：${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     setError(null);
@@ -226,53 +275,58 @@ function ExperimentModal(props: {
 
   return (
     <Modal open onClose={onClose} title={title}>
-      <ErrorBanner error={error} />
-      <div className="field">
-        <label>Name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Experiment name" />
-      </div>
-      <div className="field">
-        <label>Description</label>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Optional description"
-        />
-      </div>
-      <div className="field">
-        <label>Hyperparameters (JSON)</label>
-        <textarea
-          className="mono"
-          value={hyperText}
-          onChange={(e) => setHyperText(e.target.value)}
-          rows={8}
-        />
-      </div>
-      <div className="btn-row spread">
-        <button onClick={onClose} disabled={submitting}>
-          Cancel
-        </button>
-        <button className="btn-primary" onClick={handleSubmit} disabled={submitting}>
-          {submitting ? <Spinner /> : "Save"}
-        </button>
-      </div>
+      <form onSubmit={handleSubmit}>
+        <ErrorBanner error={error} />
+        <Field label="名称" required>
+          <Input
+            value={name}
+            autoFocus
+            placeholder="实验名称"
+            onChange={(_, data) => setName(data.value)}
+          />
+        </Field>
+        <Field label="描述">
+          <Textarea
+            value={description}
+            placeholder="可选描述"
+            resize="vertical"
+            onChange={(_, data) => setDescription(data.value)}
+          />
+        </Field>
+        <Field label="超参数 (JSON)">
+          <Textarea
+            className={shared.mono}
+            value={hyperText}
+            resize="vertical"
+            rows={8}
+            onChange={(_, data) => setHyperText(data.value)}
+          />
+        </Field>
+        <div className={s.actions}>
+          <Button type="button" onClick={onClose} disabled={submitting}>
+            取消
+          </Button>
+          <Button type="submit" appearance="primary" disabled={submitting}>
+            {submitting ? "保存中…" : "保存"}
+          </Button>
+        </div>
+      </form>
     </Modal>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Settings tab
+// 设置标签页
 // ---------------------------------------------------------------------------
 
 function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | void }) {
   const { project, onSaved } = props;
+  const shared = useSharedStyles();
 
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
-  const [inferenceCommand, setInferenceCommand] = useState(project.inference_command);
-  const [inferenceWorkdir, setInferenceWorkdir] = useState(project.inference_workdir);
-  const [schemaText, setSchemaText] = useState(
-    JSON.stringify(project.inference_param_schema ?? [], null, 2)
+  const [defaultEngineId, setDefaultEngineId] = useState<number | null>(
+    project.default_engine_id,
   );
   const [vlmBaseUrl, setVlmBaseUrl] = useState(project.vlm_base_url);
   const [vlmModel, setVlmModel] = useState(project.vlm_model);
@@ -283,18 +337,45 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Sync form state when the project (re)loads.
+  // Global presets surfaced in project config.
+  const { data: engines } = useAsync(() => api.listInferenceEngines(), []);
+  const { data: vlmPresets } = useAsync(() => api.listVlmPresets(), []);
+  const [importing, setImporting] = useState(false);
+
+  const handleImportPreset = async (presetIdStr: string) => {
+    if (!presetIdStr) return;
+    setError(null);
+    setImporting(true);
+    try {
+      await api.applyVlmPreset(Number(presetIdStr), project.id);
+      await onSaved(); // reloads project -> useEffect re-syncs the VLM fields
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // 当项目（重新）加载时同步表单状态。
   useEffect(() => {
     setName(project.name);
     setDescription(project.description);
-    setInferenceCommand(project.inference_command);
-    setInferenceWorkdir(project.inference_workdir);
-    setSchemaText(JSON.stringify(project.inference_param_schema ?? [], null, 2));
+    setDefaultEngineId(project.default_engine_id);
     setVlmBaseUrl(project.vlm_base_url);
     setVlmModel(project.vlm_model);
     setVlmApiKey("");
     setEvalPrompt(project.eval_prompt);
   }, [project]);
+
+  // If the stored default engine was since deleted, drop the dangling id so the
+  // dropdown reflects reality and saving clears it (matches the run modal).
+  useEffect(() => {
+    if (!engines) return;
+    if (defaultEngineId != null && !engines.some((e) => e.id === defaultEngineId)) {
+      setDefaultEngineId(null);
+    }
+  }, [engines, defaultEngineId]);
 
   useEffect(() => {
     if (!saved) return;
@@ -303,25 +384,10 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
   }, [saved]);
 
   const handleSave = async () => {
-    let schema: ParamDef[];
-    try {
-      const parsed = JSON.parse(schemaText || "[]");
-      if (!Array.isArray(parsed)) {
-        setError("Inference parameter schema must be a JSON array.");
-        return;
-      }
-      schema = parsed as ParamDef[];
-    } catch (e) {
-      setError(`Invalid parameter schema JSON: ${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-
     const payload: ProjectInput = {
       name,
       description,
-      inference_command: inferenceCommand,
-      inference_workdir: inferenceWorkdir,
-      inference_param_schema: schema,
+      default_engine_id: defaultEngineId,
       vlm_base_url: vlmBaseUrl,
       vlm_model: vlmModel,
       eval_prompt: evalPrompt,
@@ -345,102 +411,115 @@ function SettingsTab(props: { project: Project; onSaved: () => Promise<void> | v
   };
 
   return (
-    <div className="col">
+    <div className={shared.col}>
       <ErrorBanner error={error} />
 
-      <div className="card">
-        <h3>General</h3>
-        <div className="field">
-          <label>Name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Description</label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-        </div>
-      </div>
+      <Card>
+        <Subtitle2>常规</Subtitle2>
+        <Field label="名称">
+          <Input value={name} onChange={(_, data) => setName(data.value)} />
+        </Field>
+        <Field label="描述">
+          <Textarea
+            value={description}
+            resize="vertical"
+            onChange={(_, data) => setDescription(data.value)}
+          />
+        </Field>
+      </Card>
 
-      <div className="card">
-        <h3>Inference engine</h3>
-        <div className="field">
-          <label>Inference command</label>
-          <textarea
-            className="mono"
-            value={inferenceCommand}
-            onChange={(e) => setInferenceCommand(e.target.value)}
-            rows={3}
-          />
-          <p className="small muted">
-            Tokens {"{checkpoint}"} and {"{output_dir}"} are auto-filled; other {"{tokens}"} come
-            from inference parameters.
-          </p>
-        </div>
-        <div className="field">
-          <label>Inference workdir</label>
-          <input
-            value={inferenceWorkdir}
-            onChange={(e) => setInferenceWorkdir(e.target.value)}
-            placeholder="Working directory for the command (optional)"
-          />
-        </div>
-        <div className="field">
-          <label>Inference parameter schema (JSON)</label>
-          <textarea
-            className="mono"
-            value={schemaText}
-            onChange={(e) => setSchemaText(e.target.value)}
-            rows={8}
-          />
-          <p className="small muted">
-            Array of {"{ name, label, type, default?, options? }"} parameter definitions.
-          </p>
-        </div>
-      </div>
+      <Card>
+        <Subtitle2>推理工程</Subtitle2>
+        <Field
+          label="默认推理工程"
+          hint="运行推理时默认选用（仍可临时切换）；在“设置 → 推理工程”中管理。"
+        >
+          <Select
+            value={defaultEngineId == null ? "" : String(defaultEngineId)}
+            onChange={(_, data) =>
+              setDefaultEngineId(data.value ? Number(data.value) : null)
+            }
+          >
+            <option value="">（不指定）</option>
+            {(engines ?? []).map((engine) => (
+              <option key={engine.id} value={String(engine.id)}>
+                {engine.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {(!engines || engines.length === 0) && (
+          <Body1 className={`${shared.muted} ${shared.small}`}>
+            还没有推理工程，请先在“设置 → 推理工程”中创建。
+          </Body1>
+        )}
+      </Card>
 
-      <div className="card">
-        <h3>VLM evaluation</h3>
-        <div className="field-row">
-          <div className="field">
-            <label>VLM base URL</label>
-            <input
+      <Card>
+        <Subtitle2>VLM 评测</Subtitle2>
+        {vlmPresets && vlmPresets.length > 0 && (
+          <Field
+            label="从预设导入"
+            hint="选择后立即将预设的接口地址、模型与密钥写入本项目。"
+          >
+            <Select
+              value=""
+              disabled={importing}
+              onChange={(_, data) => void handleImportPreset(data.value)}
+            >
+              <option value="">{importing ? "导入中…" : "选择 VLM 预设…"}</option>
+              {vlmPresets.map((preset) => (
+                <option key={preset.id} value={String(preset.id)}>
+                  {preset.name}
+                  {preset.model ? ` (${preset.model})` : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        <div className={mergeClasses(shared.row, shared.wrap)}>
+          <Field className={shared.grow} label="VLM 接口地址">
+            <Input
               value={vlmBaseUrl}
-              onChange={(e) => setVlmBaseUrl(e.target.value)}
               placeholder="https://api.openai.com/v1"
+              onChange={(_, data) => setVlmBaseUrl(data.value)}
             />
-          </div>
-          <div className="field">
-            <label>VLM model</label>
-            <input
+          </Field>
+          <Field className={shared.grow} label="VLM 模型">
+            <Input
               value={vlmModel}
-              onChange={(e) => setVlmModel(e.target.value)}
               placeholder="gpt-4o-mini"
+              onChange={(_, data) => setVlmModel(data.value)}
             />
-          </div>
+          </Field>
         </div>
-        <div className="field">
-          <label>VLM API key</label>
-          <input
+        <Field label="VLM API 密钥">
+          <Input
             type="password"
             value={vlmApiKey}
-            onChange={(e) => setVlmApiKey(e.target.value)}
-            placeholder={project.vlm_api_key_set ? "configured — leave blank to keep" : "sk-..."}
+            placeholder={project.vlm_api_key_set ? "已配置——留空则保持不变" : "sk-..."}
+            onChange={(_, data) => setVlmApiKey(data.value)}
           />
-        </div>
-        <div className="field">
-          <label>Evaluation prompt</label>
-          <textarea
+        </Field>
+        <Field label="评测提示词">
+          <Textarea
             value={evalPrompt}
-            onChange={(e) => setEvalPrompt(e.target.value)}
+            resize="vertical"
             rows={5}
+            onChange={(_, data) => setEvalPrompt(data.value)}
           />
-        </div>
-      </div>
+        </Field>
+      </Card>
 
-      <div className="toolbar">
-        <button className="btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? <Spinner /> : "Save settings"}
-        </button>
-        {saved && <span className="small" style={{ color: "var(--accent-2)" }}>Saved</span>}
+      <div className={shared.toolbar}>
+        <Button appearance="primary" onClick={handleSave} disabled={saving}>
+          {saving ? "保存中…" : "保存设置"}
+        </Button>
+        {saved && (
+          <Badge appearance="filled" color="success">
+            已保存
+          </Badge>
+        )}
       </div>
     </div>
   );
