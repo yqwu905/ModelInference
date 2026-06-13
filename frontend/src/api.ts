@@ -15,6 +15,7 @@ import type {
   ServerInput,
   VlmPreset,
   VlmPresetInput,
+  VlmTestResult,
 } from "./types";
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -113,6 +114,8 @@ export const api = {
     req<void>("DELETE", `/api/settings/vlm-presets/${id}`),
   applyVlmPreset: (presetId: number, projectId: number) =>
     req<Project>("POST", `/api/settings/vlm-presets/${presetId}/apply/${projectId}`),
+  testVlmPreset: (id: number) =>
+    req<VlmTestResult>("POST", `/api/settings/vlm-presets/${id}/test`),
 
   // Settings: inference engines（推理工程）
   listInferenceEngines: () =>

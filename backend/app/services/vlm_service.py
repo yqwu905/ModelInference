@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -67,6 +68,57 @@ def _gather_images(output_dir: str, cap: int = 6) -> list[str]:
         b64 = base64.b64encode(p.read_bytes()).decode("ascii")
         uris.append(f"data:{mime};base64,{b64}")
     return uris
+
+
+def test_endpoint(base_url: str, model: str, api_key: str = "") -> dict:
+    """Probe a VLM endpoint with a minimal text-only request to confirm it
+    responds — the back end of the settings "test" action.
+
+    Runs synchronously (the caller is waiting) and never raises: it returns a
+    result dict describing the outcome. On success
+    ``{"ok": True, "message", "latency_ms", "model", "reply"}``; on any
+    misconfiguration, connection, HTTP, or response-shape failure
+    ``{"ok": False, "message"}`` with a human-readable Chinese message.
+    """
+    if not base_url or not model:
+        return {"ok": False, "message": "VLM 未配置（需填写接口地址与模型）"}
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+        "temperature": 0,
+        "max_tokens": 16,
+    }
+    url = base_url.rstrip("/") + "/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    start = time.monotonic()
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.post(url, json=payload, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+        latency_ms = int((time.monotonic() - start) * 1000)
+        reply = data["choices"][0]["message"]["content"]
+        return {
+            "ok": True,
+            "message": "模型响应正常",
+            "latency_ms": latency_ms,
+            "model": data.get("model") or model,
+            # Some endpoints return null content (e.g. tool-call turns); coerce.
+            "reply": (reply or "").strip()[:200],
+        }
+    except httpx.HTTPStatusError as e:
+        # The endpoint answered with a non-2xx: surface status + a body snippet.
+        body = e.response.text.strip()[:300] if e.response is not None else ""
+        return {"ok": False, "message": f"HTTP {e.response.status_code}：{body}"}
+    except (KeyError, IndexError, TypeError) as e:
+        # Reached the model but the response wasn't OpenAI-shaped.
+        return {"ok": False, "message": f"响应格式异常：{e}"}
+    except Exception as e:  # noqa: BLE001 - report any connect/timeout failure
+        return {"ok": False, "message": str(e)[:300]}
 
 
 def run_evaluation(evaluation_id: int) -> None:

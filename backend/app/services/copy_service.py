@@ -8,14 +8,16 @@ opens its own DB session via :func:`app.db.session_scope`.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import yaml
+from sqlmodel import Session, select
 
 from .. import db
-from ..models import Checkpoint
+from ..models import Checkpoint, ServerConfig
 
 # Common single-file checkpoint extensions. Used only to guess file-vs-directory
 # for REMOTE sources (which cannot be stat'd before transfer).
@@ -74,6 +76,25 @@ def _load_config_metadata(dst: str) -> dict:
     return {}
 
 
+def _password_for_host(session: Session, source_host: str) -> str:
+    """Return a saved ssh password for ``source_host``, or "" if none is set.
+
+    Matches a :class:`ServerConfig` by exact host string. The password lives
+    only in that table — it is never copied onto the checkpoint row nor sent to
+    the browser (the serializer redacts it). When several servers share a host,
+    the most recently created one that has a password wins.
+    """
+    if not source_host:
+        return ""
+    server = session.exec(
+        select(ServerConfig)
+        .where(ServerConfig.host == source_host)
+        .where(ServerConfig.password != "")
+        .order_by(ServerConfig.id.desc())
+    ).first()
+    return server.password if server else ""
+
+
 def copy_checkpoint(checkpoint_id: int) -> None:
     """Copy a checkpoint's source into its local destination directory."""
     with db.session_scope() as s:
@@ -89,6 +110,10 @@ def copy_checkpoint(checkpoint_id: int) -> None:
         source_host = (checkpoint.source_host or "").strip()
         source_path = checkpoint.source_path or ""
         dst = checkpoint.local_path
+
+        # A saved password for this host (if any) switches ssh from key-only to
+        # password auth via sshpass. Looked up now while the session is open.
+        password = _password_for_host(s, source_host)
 
         status = "failed"
         size_bytes = checkpoint.size_bytes
@@ -125,31 +150,49 @@ def copy_checkpoint(checkpoint_id: int) -> None:
                 elif not src.endswith("/"):
                     src = src + "/"
 
+            # With a saved password we must NOT set BatchMode=yes (it disables
+            # password auth); sshpass answers the prompt instead. Without one,
+            # keep BatchMode=yes so a key-only host fails fast rather than
+            # hanging on an interactive prompt. The password is passed to sshpass
+            # via the SSHPASS env var (not argv), so it never lands in `ps`.
+            env = None
+            sshpass_prefix: list[str] = []
+            if password:
+                if not shutil.which("sshpass"):
+                    raise RuntimeError(
+                        "源服务器配置了密码，但服务器未安装 sshpass，无法进行密码认证。"
+                        "请在服务器上安装 sshpass，或改用 SSH 密钥认证。"
+                    )
+                sshpass_prefix = ["sshpass", "-e"]
+                env = {**os.environ, "SSHPASS": password}
+            batch = "no" if password else "yes"
+            ssh_transport = (
+                f"ssh -o BatchMode={batch} -o StrictHostKeyChecking=accept-new"
+            )
+
             result = None
             if shutil.which("rsync"):
-                cmd = ["rsync", "-az", "--no-owner", "--no-group"]
+                cmd = [*sshpass_prefix, "rsync", "-az", "--no-owner", "--no-group"]
                 if source_host:
-                    cmd += [
-                        "-e",
-                        "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-                    ]
+                    cmd += ["-e", ssh_transport]
                 cmd += [src, dst]
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=3600
+                    cmd, capture_output=True, text=True, timeout=3600, env=env
                 )
             elif source_host:
                 cmd = [
+                    *sshpass_prefix,
                     "scp",
                     "-r",
                     "-o",
-                    "BatchMode=yes",
+                    f"BatchMode={batch}",
                     "-o",
                     "StrictHostKeyChecking=accept-new",
                     src,
                     dst,
                 ]
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=3600
+                    cmd, capture_output=True, text=True, timeout=3600, env=env
                 )
             elif local_is_file:
                 # Local single file without rsync: copy it into dst.

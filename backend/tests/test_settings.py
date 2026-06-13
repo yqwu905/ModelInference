@@ -74,6 +74,165 @@ def test_server_missing_404(client):
     assert client.delete("/api/settings/servers/999999").status_code == 404
 
 
+def test_server_password_redaction_and_semantics(client):
+    # create with a password -> redacted on read, never echoes the raw value
+    r = client.post(
+        "/api/settings/servers",
+        json={"name": "pw box", "host": "user@gpu", "password": "p@ss"},
+    )
+    assert r.status_code == 201, r.text
+    server = r.json()
+    sid = server["id"]
+    assert server["password_set"] is True
+    assert "password" not in server
+    assert "p@ss" not in r.text
+
+    # omitting password on update keeps the existing one
+    r = client.put(f"/api/settings/servers/{sid}", json={"host": "user@gpu2"})
+    assert r.status_code == 200, r.text
+    assert r.json()["host"] == "user@gpu2"
+    assert r.json()["password_set"] is True
+
+    # explicit empty string clears it
+    r = client.put(f"/api/settings/servers/{sid}", json={"password": ""})
+    assert r.status_code == 200, r.text
+    assert r.json()["password_set"] is False
+
+    # setting a new password flips it back on
+    r = client.put(f"/api/settings/servers/{sid}", json={"password": "new"})
+    assert r.status_code == 200, r.text
+    assert r.json()["password_set"] is True
+
+
+def test_server_create_without_password(client):
+    r = client.post("/api/settings/servers", json={"name": "nopw"})
+    assert r.status_code == 201, r.text
+    assert r.json()["password_set"] is False
+
+
+# --- checkpoint copy: saved server password drives ssh auth ----------------
+
+
+class _FakeCompleted:
+    """Stand-in for subprocess.CompletedProcess on a successful transfer."""
+
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+
+def _insert_remote_checkpoint(local_path: str, host: str) -> int:
+    """Insert a pending remote checkpoint directly, returning its id.
+
+    Bypasses the create endpoint so no async copy fires before the test has
+    monkeypatched subprocess; the test then calls copy_checkpoint synchronously.
+    """
+    from app import db
+    from app.models import Checkpoint, Experiment, Project
+
+    with db.session_scope() as s:
+        proj = Project(name="P")
+        s.add(proj)
+        s.commit()
+        s.refresh(proj)
+        exp = Experiment(project_id=proj.id, name="e")
+        s.add(exp)
+        s.commit()
+        s.refresh(exp)
+        ck = Checkpoint(
+            experiment_id=exp.id,
+            display_name="c",
+            source_host=host,
+            source_path="/remote/ckpt",
+            local_path=local_path,
+            status="pending",
+        )
+        s.add(ck)
+        s.commit()
+        s.refresh(ck)
+        return ck.id
+
+
+def test_copy_uses_sshpass_when_server_password_saved(client, tmp_path, monkeypatch):
+    from app.services import copy_service
+
+    client.post(
+        "/api/settings/servers",
+        json={"name": "pw", "host": "user@gpu", "password": "s3cret"},
+    )
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return _FakeCompleted()
+
+    # rsync + sshpass both "installed".
+    monkeypatch.setattr(copy_service.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(copy_service.subprocess, "run", fake_run)
+
+    cid = _insert_remote_checkpoint(str(tmp_path / "dst"), "user@gpu")
+    copy_service.copy_checkpoint(cid)
+
+    cmd = captured["cmd"]
+    assert cmd[:2] == ["sshpass", "-e"]
+    assert "rsync" in cmd
+    # password auth requires BatchMode=no in the ssh transport spec
+    assert any("BatchMode=no" in part for part in cmd)
+    # the secret travels via the env, never on argv
+    assert captured["env"]["SSHPASS"] == "s3cret"
+    assert not any("s3cret" in str(part) for part in cmd)
+
+    assert client.get(f"/api/checkpoints/{cid}").json()["status"] == "ready"
+
+
+def test_copy_without_saved_password_stays_batchmode_yes(client, tmp_path, monkeypatch):
+    from app.services import copy_service
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return _FakeCompleted()
+
+    monkeypatch.setattr(copy_service.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(copy_service.subprocess, "run", fake_run)
+
+    # No server saved for this host => key-only auth, fail-fast BatchMode=yes.
+    cid = _insert_remote_checkpoint(str(tmp_path / "dst"), "user@nokey")
+    copy_service.copy_checkpoint(cid)
+
+    cmd = captured["cmd"]
+    assert cmd[0] != "sshpass"
+    assert any("BatchMode=yes" in part for part in cmd)
+    assert captured["env"] is None
+
+
+def test_copy_fails_clearly_when_sshpass_missing(client, tmp_path, monkeypatch):
+    from app.services import copy_service
+
+    client.post(
+        "/api/settings/servers",
+        json={"name": "pw2", "host": "user@nosshpass", "password": "x"},
+    )
+
+    # rsync present, sshpass absent.
+    monkeypatch.setattr(
+        copy_service.shutil,
+        "which",
+        lambda name: None if name == "sshpass" else f"/usr/bin/{name}",
+    )
+
+    cid = _insert_remote_checkpoint(str(tmp_path / "dst"), "user@nosshpass")
+    copy_service.copy_checkpoint(cid)
+
+    ck = client.get(f"/api/checkpoints/{cid}").json()
+    assert ck["status"] == "failed"
+    assert "sshpass" in ck["message"]
+
+
 # --- VLM presets -----------------------------------------------------------
 
 
@@ -151,6 +310,71 @@ def test_apply_preset_404s(client):
     preset = client.post("/api/settings/vlm-presets", json={"name": "v2"}).json()
     assert client.post(f"/api/settings/vlm-presets/999999/apply/{pr['id']}").status_code == 404
     assert client.post(f"/api/settings/vlm-presets/{preset['id']}/apply/999999").status_code == 404
+
+
+# --- VLM preset test (endpoint probe) --------------------------------------
+
+
+class _FakeResponse:
+    """Minimal stand-in for an httpx.Response in the happy-path probe test."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    """Drop-in for httpx.Client that echoes a well-formed chat completion."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, url, json=None, headers=None):
+        return _FakeResponse(
+            {"model": json["model"], "choices": [{"message": {"content": "ok"}}]}
+        )
+
+
+def test_vlm_preset_test_success(client, monkeypatch):
+    from app.services import vlm_service
+
+    monkeypatch.setattr(vlm_service.httpx, "Client", _FakeClient)
+    preset = client.post(
+        "/api/settings/vlm-presets",
+        json={"name": "t", "base_url": "https://vlm.example/v1",
+              "model": "qwen-vl", "api_key": "sk-x"},
+    ).json()
+
+    r = client.post(f"/api/settings/vlm-presets/{preset['id']}/test")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["reply"] == "ok"
+    assert body["model"] == "qwen-vl"
+    assert isinstance(body["latency_ms"], int)
+
+
+def test_vlm_preset_test_unconfigured(client):
+    # No base_url/model -> short-circuits to ok=false without any network call.
+    preset = client.post("/api/settings/vlm-presets", json={"name": "empty"}).json()
+    r = client.post(f"/api/settings/vlm-presets/{preset['id']}/test")
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is False
+
+
+def test_vlm_preset_test_missing_404(client):
+    assert client.post("/api/settings/vlm-presets/999999/test").status_code == 404
 
 
 # --- inference engines -----------------------------------------------------

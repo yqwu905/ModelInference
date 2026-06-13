@@ -130,6 +130,8 @@ export interface ServerConfig {
   host: string;
   default_path: string;
   description: string;
+  // Whether an ssh password is saved (the raw password is never returned).
+  password_set: boolean;
   created_at: string;
 }
 
@@ -138,6 +140,8 @@ export interface ServerInput {
   host?: string;
   default_path?: string;
   description?: string;
+  // Provided non-empty => set; omitted => keep existing password on update.
+  password?: string;
 }
 
 export interface VlmPreset {
@@ -155,6 +159,16 @@ export interface VlmPresetInput {
   model?: string;
   // Provided non-empty => set; omitted => keep existing key on update.
   api_key?: string;
+}
+
+// Result of probing a VLM endpoint (POST /vlm-presets/{id}/test). The extra
+// fields are present only when ok is true.
+export interface VlmTestResult {
+  ok: boolean;
+  message: string;
+  latency_ms?: number;
+  model?: string;
+  reply?: string;
 }
 
 export interface InferenceEngine {

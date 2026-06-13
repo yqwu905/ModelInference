@@ -109,6 +109,8 @@ def server_out(s: ServerConfig) -> dict[str, Any]:
         "host": s.host,
         "default_path": s.default_path,
         "description": s.description,
+        # Never return the raw password; expose only whether one is configured.
+        "password_set": bool(s.password),
         "created_at": s.created_at.isoformat(),
     }
 

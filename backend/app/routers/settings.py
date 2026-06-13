@@ -35,6 +35,7 @@ from ..serializers import (
     server_out,
     vlm_preset_out,
 )
+from ..services import vlm_service
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -57,6 +58,7 @@ def create_server(body: ServerCreate, session: Session = Depends(get_session)):
         host=body.host,
         default_path=body.default_path,
         description=body.description,
+        password=body.password if body.password is not None else "",
     )
     session.add(server)
     session.commit()
@@ -189,6 +191,21 @@ def apply_vlm_preset(
     session.commit()
     session.refresh(project)
     return project_out(project)
+
+
+@router.post("/vlm-presets/{preset_id}/test")
+def test_vlm_preset(preset_id: int, session: Session = Depends(get_session)):
+    """Probe a preset's endpoint with a minimal request to check it responds.
+
+    Runs server-side so the (redacted) api key never reaches the browser. The
+    result is returned as a body (``{"ok", "message", ...}``): a model or
+    connection failure is a 200 with ``ok=false``, not an HTTP error — only a
+    missing preset is a 404.
+    """
+    preset = session.get(VlmPreset, preset_id)
+    if preset is None:
+        raise HTTPException(404, "preset not found")
+    return vlm_service.test_endpoint(preset.base_url, preset.model, preset.api_key)
 
 
 # ---------------------------------------------------------------------------

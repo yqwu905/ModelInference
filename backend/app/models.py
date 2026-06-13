@@ -121,6 +121,10 @@ class ServerConfig(SQLModel, table=True):
     host: str = ""                 # user@host or host (empty => local copies)
     default_path: str = ""         # prefill for a checkpoint's source_path
     description: str = ""
+    # Write-only ssh password, like VlmPreset.api_key: redacted to a boolean on
+    # read. The checkpoint-copy worker feeds it to ssh via sshpass when the
+    # source host needs password auth instead of an ssh key (matched by host).
+    password: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
 
 

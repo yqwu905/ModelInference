@@ -6,6 +6,8 @@ import {
   Card,
   Field,
   Input,
+  MessageBar,
+  MessageBarBody,
   Tab,
   TabList,
   Textarea,
@@ -22,6 +24,7 @@ import type {
   ServerInput,
   VlmPreset,
   VlmPresetInput,
+  VlmTestResult,
 } from "../types";
 import { useAsync } from "../hooks";
 import { useSharedStyles } from "../theme/sharedStyles";
@@ -50,7 +53,18 @@ const useStyles = makeStyles({
     marginBottom: tokens.spacingVerticalS,
   },
   kvInput: { flexGrow: 1 },
+  testBar: { marginTop: tokens.spacingVerticalS },
 });
+
+/** One-line summary of a VLM test result for the status bar. */
+function summarizeVlmTest(r: VlmTestResult): string {
+  if (!r.ok) return r.message;
+  const parts = [r.message];
+  if (r.latency_ms != null) parts.push(`${r.latency_ms}ms`);
+  if (r.model) parts.push(`模型 ${r.model}`);
+  if (r.reply) parts.push(`回复「${r.reply}」`);
+  return parts.join(" · ");
+}
 
 export default function SettingsPage() {
   const shared = useSharedStyles();
@@ -106,7 +120,8 @@ function ServersTab() {
       </div>
 
       <p className={`${shared.muted} ${shared.small}`} style={{ marginTop: 0 }}>
-        服务器用于在拷贝检查点时快速选取来源主机与路径。
+        服务器用于在拷贝检查点时快速选取来源主机与路径；如填写 SSH
+        密码，拷贝时将通过 sshpass 进行密码认证，否则使用 SSH 密钥。
       </p>
 
       <ErrorBanner error={error ?? actionError} />
@@ -130,6 +145,10 @@ function ServersTab() {
                 <span className={shared.kvVal}>{srv.host || "（本地）"}</span>
                 <span className={shared.kvKey}>默认路径</span>
                 <span className={shared.kvVal}>{srv.default_path || "—"}</span>
+                <span className={shared.kvKey}>认证</span>
+                <span className={shared.kvVal}>
+                  {srv.password_set ? "已保存密码" : "SSH 密钥"}
+                </span>
                 {srv.description && (
                   <>
                     <span className={shared.kvKey}>描述</span>
@@ -193,6 +212,7 @@ function ServerModal(props: {
   const [host, setHost] = useState(initial?.host ?? "");
   const [defaultPath, setDefaultPath] = useState(initial?.default_path ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -202,15 +222,20 @@ function ServerModal(props: {
       setError("名称为必填项。");
       return;
     }
+    const payload: ServerInput = {
+      name: name.trim(),
+      host: host.trim(),
+      default_path: defaultPath.trim(),
+      description: description.trim(),
+    };
+    // Only send the password when the user typed one, so editing without
+    // retyping keeps the existing secret (backend treats omitted as "keep").
+    if (password) payload.password = password;
+
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit({
-        name: name.trim(),
-        host: host.trim(),
-        default_path: defaultPath.trim(),
-        description: description.trim(),
-      });
+      await onSubmit(payload);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSubmitting(false);
@@ -245,6 +270,19 @@ function ServerModal(props: {
             onChange={(_, d) => setDefaultPath(d.value)}
           />
         </Field>
+        <Field
+          label="SSH 密码"
+          hint="可选。填写后拷贝检查点时通过 sshpass 进行密码认证（需服务器安装 sshpass）；留空则使用 SSH 密钥。"
+        >
+          <Input
+            type="password"
+            value={password}
+            placeholder={
+              initial?.password_set ? "已配置——留空则保持不变" : "留空表示不使用密码"
+            }
+            onChange={(_, d) => setPassword(d.value)}
+          />
+        </Field>
         <Field label="描述">
           <Textarea
             value={description}
@@ -277,6 +315,8 @@ function VlmTab() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<VlmPreset | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<number | null>(null);
+  const [testResults, setTestResults] = useState<Record<number, VlmTestResult>>({});
 
   const handleDelete = async (id: number) => {
     setActionError(null);
@@ -285,6 +325,23 @@ function VlmTab() {
       await reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleTest = async (id: number) => {
+    setTestingId(id);
+    try {
+      const res = await api.testVlmPreset(id);
+      setTestResults((prev) => ({ ...prev, [id]: res }));
+    } catch (err) {
+      // A transport-level failure (e.g. the backend 404s the preset); surface
+      // it in the same status bar as a normal failed result.
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: { ok: false, message: err instanceof Error ? err.message : String(err) },
+      }));
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -326,6 +383,13 @@ function VlmTab() {
                 <span className={shared.kvVal}>{preset.model || "—"}</span>
               </div>
               <div className={shared.btnRow}>
+                <Button
+                  size="small"
+                  disabled={testingId === preset.id}
+                  onClick={() => handleTest(preset.id)}
+                >
+                  {testingId === preset.id ? "测试中…" : "测试"}
+                </Button>
                 <Button size="small" onClick={() => setEditing(preset)}>
                   编辑
                 </Button>
@@ -336,6 +400,16 @@ function VlmTab() {
                   删除
                 </ConfirmButton>
               </div>
+              {testResults[preset.id] && (
+                <MessageBar
+                  className={s.testBar}
+                  intent={testResults[preset.id].ok ? "success" : "error"}
+                >
+                  <MessageBarBody>
+                    {summarizeVlmTest(testResults[preset.id])}
+                  </MessageBarBody>
+                </MessageBar>
+              )}
             </Card>
           ))}
         </div>

@@ -89,6 +89,8 @@ class ServerCreate(BaseModel):
     host: str = ""
     default_path: str = ""
     description: str = ""
+    # ssh password (optional). Provided non-empty => set; omitted/None => none.
+    password: Optional[str] = None
 
 
 class ServerUpdate(BaseModel):
@@ -96,6 +98,8 @@ class ServerUpdate(BaseModel):
     host: Optional[str] = None
     default_path: Optional[str] = None
     description: Optional[str] = None
+    # Provided non-empty => set; "" => clear; omitted => keep (handled in router).
+    password: Optional[str] = None
 
 
 # ---- Settings: VLM presets ----
