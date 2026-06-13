@@ -143,6 +143,12 @@ function ServersTab() {
               <div className={shared.kv}>
                 <span className={shared.kvKey}>主机</span>
                 <span className={shared.kvVal}>{srv.host || "（本地）"}</span>
+                {srv.host && (
+                  <>
+                    <span className={shared.kvKey}>端口</span>
+                    <span className={shared.kvVal}>{srv.port}</span>
+                  </>
+                )}
                 <span className={shared.kvKey}>默认路径</span>
                 <span className={shared.kvVal}>{srv.default_path || "—"}</span>
                 <span className={shared.kvKey}>认证</span>
@@ -210,6 +216,7 @@ function ServerModal(props: {
   const s = useStyles();
   const [name, setName] = useState(initial?.name ?? "");
   const [host, setHost] = useState(initial?.host ?? "");
+  const [port, setPort] = useState(String(initial?.port ?? 22));
   const [defaultPath, setDefaultPath] = useState(initial?.default_path ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [password, setPassword] = useState("");
@@ -222,9 +229,16 @@ function ServerModal(props: {
       setError("名称为必填项。");
       return;
     }
+    const portNum = parseInt(port, 10);
+    if (port.trim() && (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535)) {
+      setError("端口需为 1–65535 之间的整数。");
+      return;
+    }
     const payload: ServerInput = {
       name: name.trim(),
       host: host.trim(),
+      // Empty/invalid falls back to the default ssh port.
+      port: port.trim() ? portNum : 22,
       default_path: defaultPath.trim(),
       description: description.trim(),
     };
@@ -260,6 +274,15 @@ function ServerModal(props: {
             placeholder="user@gpu-box"
             className={shared.mono}
             onChange={(_, d) => setHost(d.value)}
+          />
+        </Field>
+        <Field label="SSH 端口" hint="默认 22；仅本地拷贝时忽略。">
+          <Input
+            type="number"
+            value={port}
+            placeholder="22"
+            className={shared.mono}
+            onChange={(_, d) => setPort(d.value)}
           />
         </Field>
         <Field label="默认路径">

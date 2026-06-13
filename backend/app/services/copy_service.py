@@ -76,23 +76,22 @@ def _load_config_metadata(dst: str) -> dict:
     return {}
 
 
-def _password_for_host(session: Session, source_host: str) -> str:
-    """Return a saved ssh password for ``source_host``, or "" if none is set.
+def _server_for_host(session: Session, source_host: str) -> ServerConfig | None:
+    """Return the most recent saved :class:`ServerConfig` matching ``source_host``.
 
-    Matches a :class:`ServerConfig` by exact host string. The password lives
+    It supplies the ssh password and port for the copy. Returns ``None`` when no
+    server is saved for the host (key auth, default port 22). The password lives
     only in that table — it is never copied onto the checkpoint row nor sent to
     the browser (the serializer redacts it). When several servers share a host,
-    the most recently created one that has a password wins.
+    the most recently created one wins.
     """
     if not source_host:
-        return ""
-    server = session.exec(
+        return None
+    return session.exec(
         select(ServerConfig)
         .where(ServerConfig.host == source_host)
-        .where(ServerConfig.password != "")
         .order_by(ServerConfig.id.desc())
     ).first()
-    return server.password if server else ""
 
 
 def copy_checkpoint(checkpoint_id: int) -> None:
@@ -111,9 +110,13 @@ def copy_checkpoint(checkpoint_id: int) -> None:
         source_path = checkpoint.source_path or ""
         dst = checkpoint.local_path
 
-        # A saved password for this host (if any) switches ssh from key-only to
-        # password auth via sshpass. Looked up now while the session is open.
-        password = _password_for_host(s, source_host)
+        # A saved server for this host (if any) supplies the ssh password and
+        # port. A password switches ssh from key-only to password auth via
+        # sshpass; a non-default port is passed to ssh/scp. Looked up now while
+        # the session is open.
+        server = _server_for_host(s, source_host)
+        password = server.password if server else ""
+        port = (server.port or 22) if server else 22
 
         status = "failed"
         size_bytes = checkpoint.size_bytes
@@ -169,6 +172,10 @@ def copy_checkpoint(checkpoint_id: int) -> None:
             ssh_transport = (
                 f"ssh -o BatchMode={batch} -o StrictHostKeyChecking=accept-new"
             )
+            # ssh defaults to 22; only spell out a non-default port (keeps the
+            # command minimal and the default path identical to before).
+            if port != 22:
+                ssh_transport += f" -p {port}"
 
             result = None
             if shutil.which("rsync"):
@@ -188,9 +195,10 @@ def copy_checkpoint(checkpoint_id: int) -> None:
                     f"BatchMode={batch}",
                     "-o",
                     "StrictHostKeyChecking=accept-new",
-                    src,
-                    dst,
                 ]
+                if port != 22:
+                    cmd += ["-P", str(port)]  # scp uses -P (capital) for the port
+                cmd += [src, dst]
                 result = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=3600, env=env
                 )

@@ -119,6 +119,7 @@ class ServerConfig(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str                      # display label, e.g. "GPU box A"
     host: str = ""                 # user@host or host (empty => local copies)
+    port: int = 22                 # ssh port for the copy (default 22)
     default_path: str = ""         # prefill for a checkpoint's source_path
     description: str = ""
     # Write-only ssh password, like VlmPreset.api_key: redacted to a boolean on

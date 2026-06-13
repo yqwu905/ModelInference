@@ -87,6 +87,7 @@ class EvaluationCreate(BaseModel):
 class ServerCreate(BaseModel):
     name: str
     host: str = ""
+    port: int = 22
     default_path: str = ""
     description: str = ""
     # ssh password (optional). Provided non-empty => set; omitted/None => none.
@@ -96,6 +97,7 @@ class ServerCreate(BaseModel):
 class ServerUpdate(BaseModel):
     name: Optional[str] = None
     host: Optional[str] = None
+    port: Optional[int] = None
     default_path: Optional[str] = None
     description: Optional[str] = None
     # Provided non-empty => set; "" => clear; omitted => keep (handled in router).

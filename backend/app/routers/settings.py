@@ -56,6 +56,7 @@ def create_server(body: ServerCreate, session: Session = Depends(get_session)):
     server = ServerConfig(
         name=body.name,
         host=body.host,
+        port=body.port,
         default_path=body.default_path,
         description=body.description,
         password=body.password if body.password is not None else "",

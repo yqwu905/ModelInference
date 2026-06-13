@@ -110,6 +110,25 @@ def test_server_create_without_password(client):
     assert r.json()["password_set"] is False
 
 
+def test_server_port_roundtrip_and_default(client):
+    # explicit port is stored and returned
+    r = client.post(
+        "/api/settings/servers",
+        json={"name": "ported", "host": "user@gpu", "port": 2222},
+    )
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    assert r.json()["port"] == 2222
+
+    # omitting the port defaults to 22
+    r = client.post("/api/settings/servers", json={"name": "default-port"})
+    assert r.json()["port"] == 22
+
+    # update changes it; omitting it on a later update keeps it
+    assert client.put(f"/api/settings/servers/{sid}", json={"port": 2022}).json()["port"] == 2022
+    assert client.put(f"/api/settings/servers/{sid}", json={"name": "p2"}).json()["port"] == 2022
+
+
 # --- checkpoint copy: saved server password drives ssh auth ----------------
 
 
@@ -208,6 +227,36 @@ def test_copy_without_saved_password_stays_batchmode_yes(client, tmp_path, monke
     assert cmd[0] != "sshpass"
     assert any("BatchMode=yes" in part for part in cmd)
     assert captured["env"] is None
+    # default port 22 => no explicit -p in the ssh transport
+    assert not any("-p " in part for part in cmd)
+
+
+def test_copy_passes_custom_port(client, tmp_path, monkeypatch):
+    from app.services import copy_service
+
+    client.post(
+        "/api/settings/servers",
+        json={"name": "ported", "host": "user@ported", "port": 2222},
+    )
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return _FakeCompleted()
+
+    monkeypatch.setattr(copy_service.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(copy_service.subprocess, "run", fake_run)
+
+    cid = _insert_remote_checkpoint(str(tmp_path / "dst"), "user@ported")
+    copy_service.copy_checkpoint(cid)
+
+    cmd = captured["cmd"]
+    # rsync carries the port inside its ssh transport (`-e "ssh ... -p 2222"`)
+    assert any("-p 2222" in part for part in cmd)
+    assert cmd[0] != "sshpass"  # no password configured for this host
+    assert client.get(f"/api/checkpoints/{cid}").json()["status"] == "ready"
 
 
 def test_copy_fails_clearly_when_sshpass_missing(client, tmp_path, monkeypatch):

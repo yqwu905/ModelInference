@@ -107,6 +107,8 @@ def server_out(s: ServerConfig) -> dict[str, Any]:
         "id": s.id,
         "name": s.name,
         "host": s.host,
+        # Older rows migrated in before this column existed read back as NULL.
+        "port": s.port or 22,
         "default_path": s.default_path,
         "description": s.description,
         # Never return the raw password; expose only whether one is configured.

@@ -128,6 +128,7 @@ export interface ServerConfig {
   id: number;
   name: string;
   host: string;
+  port: number;
   default_path: string;
   description: string;
   // Whether an ssh password is saved (the raw password is never returned).
@@ -138,6 +139,7 @@ export interface ServerConfig {
 export interface ServerInput {
   name: string;
   host?: string;
+  port?: number;
   default_path?: string;
   description?: string;
   // Provided non-empty => set; omitted => keep existing password on update.
