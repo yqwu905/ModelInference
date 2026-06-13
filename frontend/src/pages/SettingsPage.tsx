@@ -770,7 +770,7 @@ function EngineModal(props: {
         </Field>
         <Field
           label="推理命令"
-          hint="令牌 {checkpoint} 与 {output_dir} 会自动填充；其他 {token} 来自下方参数。"
+          hint="{checkpoint} 与 {output_dir} 会自动填充；下方参数默认以 --键 值 追加到命令末尾，也可用 {键} 在命令中就地引用（引用后不再追加）。"
         >
           <Textarea
             className={shared.mono}
@@ -789,7 +789,10 @@ function EngineModal(props: {
             onChange={(_, d) => setWorkdir(d.value)}
           />
         </Field>
-        <Field label="参数（键值对）" hint="运行推理时按此渲染输入，可临时修改默认值。">
+        <Field
+          label="参数（键值对）"
+          hint="默认以 --键 值 追加到命令；命令中用 {键} 引用则改为就地替换。运行推理时可临时修改默认值。空值则追加为 --键 开关。"
+        >
           <KeyValueEditor pairs={pairs} onChange={setPairs} />
         </Field>
         <div className={s.actions}>

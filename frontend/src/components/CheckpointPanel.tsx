@@ -5,6 +5,7 @@ import {
   Card,
   Field,
   Input,
+  ProgressBar,
   Select,
   Subtitle2,
   makeStyles,
@@ -44,6 +45,13 @@ const useStyles = makeStyles({
   metadata: { marginTop: tokens.spacingVerticalS },
   metadataKv: { marginTop: tokens.spacingVerticalS },
   cardKv: { marginTop: tokens.spacingVerticalS },
+  progress: { marginTop: tokens.spacingVerticalM },
+  progressLabel: {
+    display: "flex",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalM,
+    marginBottom: tokens.spacingVerticalXS,
+  },
   cardMessage: { marginTop: tokens.spacingVerticalS },
   cardActions: {
     display: "flex",
@@ -264,6 +272,26 @@ function MetadataSection({ metadata }: { metadata: Record<string, unknown> }) {
   );
 }
 
+/** Live copy progress: a determinate bar + percent for local sources, or an
+ * indeterminate bar with the growing byte count for remote ones. */
+function CopyProgress({ checkpoint }: { checkpoint: Checkpoint }) {
+  const s = useStyles();
+  const shared = useSharedStyles();
+  const determinate = checkpoint.progress > 0;
+  return (
+    <div className={s.progress}>
+      <div className={`${s.progressLabel} ${shared.small} ${shared.muted}`}>
+        <span>{determinate ? `拷贝中 ${checkpoint.progress}%` : "拷贝中…"}</span>
+        <span>{formatBytes(checkpoint.size_bytes)}</span>
+      </div>
+      <ProgressBar
+        thickness="large"
+        value={determinate ? checkpoint.progress / 100 : undefined}
+      />
+    </div>
+  );
+}
+
 export default function CheckpointPanel({ experimentId }: { experimentId: number }) {
   const s = useStyles();
   const shared = useSharedStyles();
@@ -329,6 +357,7 @@ export default function CheckpointPanel({ experimentId }: { experimentId: number
                 <span className={shared.kvKey}>大小</span>
                 <span>{formatBytes(c.size_bytes)}</span>
               </div>
+              {c.status === "copying" && <CopyProgress checkpoint={c} />}
               {c.message && (
                 <p className={`${shared.muted} ${shared.small} ${s.cardMessage}`}>
                   {c.message}

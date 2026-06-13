@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.inference_service import _render
+from app.services.inference_service import _append_params, _render
 from app.services.vlm_service import _strip_code_fence
 
 
@@ -47,6 +47,36 @@ def test_render_substitutes_known_tokens_and_preserves_braces():
     assert "{0}" in out
     assert "{unknown}" in out
     assert "${HOME}" in out
+
+
+# --- engine key/value params reach the command line ---
+def test_append_params_adds_unreferenced_as_flags():
+    template = "python infer.py --ckpt {checkpoint} --out {output_dir}"
+    params = {"prompt": "a cat", "steps": "20"}
+    # _render only fills {tokens}; the params aren't referenced, so they must be
+    # appended as flags (value shell-quoted).
+    rendered = _render(template, {**params, "checkpoint": "/c", "output_dir": "/o"})
+    out = _append_params(rendered, template, params)
+    assert "--ckpt /c" in out
+    assert "--out /o" in out
+    assert "--prompt 'a cat'" in out
+    assert "--steps 20" in out
+
+
+def test_append_params_skips_templated_params():
+    # A param referenced via {prompt} is substituted in place, not re-appended.
+    template = "infer --prompt {prompt} --ckpt {checkpoint}"
+    params = {"prompt": "hello"}
+    rendered = _render(template, {**params, "checkpoint": "/c"})
+    out = _append_params(rendered, template, params)
+    assert out.count("--prompt") == 1
+    assert "--prompt hello" in out
+
+
+def test_append_params_empty_value_is_bare_flag():
+    # Empty value => a switch (`--fp16`), non-empty => `--key value`.
+    out = _append_params("infer", "infer", {"fp16": "", "seed": "7"})
+    assert out == "infer --fp16 --seed 7"
 
 
 # --- #3: fence stripping handles inline + own-line + bare JSON ---

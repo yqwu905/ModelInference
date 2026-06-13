@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 import yaml
@@ -94,6 +95,62 @@ def _server_for_host(session: Session, source_host: str) -> ServerConfig | None:
     ).first()
 
 
+def _dir_size(path: str) -> int:
+    """Total size in bytes of all files under ``path`` (0 if it can't be read)."""
+    try:
+        return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+def _source_total_bytes(source_host: str, source_path: str) -> int | None:
+    """Total size of a LOCAL source, or ``None`` when it can't be known.
+
+    Returns ``None`` for remote sources (a remote path can't be stat'd before
+    transfer), so the copy shows live bytes with an indeterminate bar rather
+    than a misleading percentage.
+    """
+    if source_host or not source_path:
+        return None
+    p = Path(source_path)
+    try:
+        if p.is_file():
+            return p.stat().st_size
+        if p.is_dir():
+            return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    except OSError:
+        return None
+    return None
+
+
+def _monitor_progress(
+    checkpoint_id: int, dst: str, total: int | None, stop: threading.Event
+) -> None:
+    """Until ``stop`` is set, poll the destination size every second and write
+    it to the checkpoint row (with a percent when ``total`` is known).
+
+    Runs in its own thread with its own DB session — sessions aren't thread-safe
+    — and is best-effort: any error (e.g. a transient SQLite lock) is swallowed
+    so progress reporting can never fail the copy. Stops early if the row is
+    gone or no longer copying. Caps at 99 so only the final update reaches 100.
+    """
+    while not stop.wait(1.0):
+        size = _dir_size(dst)
+        pct = min(99, int(size * 100 / total)) if total else 0
+        try:
+            with db.session_scope() as ms:
+                ck = ms.get(Checkpoint, checkpoint_id)
+                if ck is None or ck.status != "copying":
+                    return
+                ck.size_bytes = size
+                if total:
+                    ck.progress = pct
+                ms.add(ck)
+                ms.commit()
+        except Exception:  # noqa: BLE001 - progress is non-critical, never raise
+            pass
+
+
 def copy_checkpoint(checkpoint_id: int) -> None:
     """Copy a checkpoint's source into its local destination directory."""
     with db.session_scope() as s:
@@ -103,6 +160,7 @@ def copy_checkpoint(checkpoint_id: int) -> None:
 
         checkpoint.status = "copying"
         checkpoint.message = ""
+        checkpoint.progress = 0
         s.add(checkpoint)
         s.commit()
 
@@ -123,6 +181,18 @@ def copy_checkpoint(checkpoint_id: int) -> None:
         message = ""
         local_is_file = False
         config_metadata_json: str | None = None  # None => leave unchanged
+
+        # Stream copy progress in the background: a monitor thread polls the
+        # destination size while the (blocking) transfer runs. Local sources
+        # also get a percentage; remote sources just get the live byte count.
+        total = _source_total_bytes(source_host, source_path)
+        stop = threading.Event()
+        monitor = threading.Thread(
+            target=_monitor_progress,
+            args=(checkpoint_id, dst, total, stop),
+            daemon=True,
+        )
+        monitor.start()
 
         try:
             # Build the source spec: local path or user@host:path.
@@ -230,12 +300,19 @@ def copy_checkpoint(checkpoint_id: int) -> None:
         except Exception as e:  # noqa: BLE001 - record failure on the row
             status = "failed"
             message = str(e)
+        finally:
+            # Stop the monitor before the authoritative final update so it can't
+            # clobber the row afterwards.
+            stop.set()
+            monitor.join(timeout=3)
 
         # Re-fetch inside the session before the final update.
         checkpoint = s.get(Checkpoint, checkpoint_id)
         if checkpoint is not None:
             checkpoint.status = status
             checkpoint.size_bytes = size_bytes
+            if status == "ready":
+                checkpoint.progress = 100
             checkpoint.message = message
             if config_metadata_json is not None:
                 checkpoint.config_metadata = config_metadata_json

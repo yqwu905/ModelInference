@@ -66,6 +66,8 @@ def checkpoint_out(c: Checkpoint) -> dict[str, Any]:
         "local_path": c.local_path,
         "status": c.status,
         "size_bytes": c.size_bytes,
+        # Older rows migrated in before this column existed read back as NULL.
+        "progress": c.progress or 0,
         "message": c.message,
         # Parsed config.yaml of a directory checkpoint (empty object if none).
         "metadata": _loads(c.config_metadata, {}),

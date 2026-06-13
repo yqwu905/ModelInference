@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import traceback
 from pathlib import Path
@@ -32,6 +33,28 @@ def _render(template: str, mapping: dict) -> str:
         lambda m: str(mapping[m.group(1)]) if m.group(1) in mapping else m.group(0),
         template,
     )
+
+
+def _append_params(command: str, template: str, params: dict) -> str:
+    """Append params not already referenced in the template as CLI flags.
+
+    Any param whose name appears in ``template`` as a ``{name}`` token was
+    already substituted in place by :func:`_render`, so it is skipped here. The
+    rest are appended as ``--name value`` (value shell-quoted, since the run
+    uses ``shell=True``); a param with an empty value becomes a bare ``--name``
+    flag. Keys are used verbatim — the engine form already constrains them to
+    simple names.
+    """
+    referenced = set(_TOKEN_RE.findall(template))
+    extras: list[str] = []
+    for key, value in params.items():
+        if key in referenced:
+            continue
+        text = "" if value is None else str(value)
+        extras.append(f"--{key}" if text == "" else f"--{key} {shlex.quote(text)}")
+    if not extras:
+        return command
+    return f"{command} {' '.join(extras)}"
 
 
 def run_inference(inference_id: int) -> None:
@@ -60,6 +83,10 @@ def run_inference(inference_id: int) -> None:
                 project.inference_command if project else ""
             )
             command = _render(template, subst)
+            # Params not referenced via a {token} in the template are appended
+            # as `--key value` flags so key/value pairs reach the CLI even when
+            # the command doesn't template them explicitly.
+            command = _append_params(command, template, params)
 
             Path(inference.output_dir).mkdir(parents=True, exist_ok=True)
             workdir = (

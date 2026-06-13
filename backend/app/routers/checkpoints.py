@@ -111,6 +111,7 @@ def recopy_checkpoint(
         raise HTTPException(404, "checkpoint not found")
     checkpoint.status = "copying"
     checkpoint.message = ""
+    checkpoint.progress = 0
     session.add(checkpoint)
     session.commit()
     session.refresh(checkpoint)

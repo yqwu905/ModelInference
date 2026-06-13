@@ -68,6 +68,10 @@ class Checkpoint(SQLModel, table=True):
     local_path: str = ""           # resolved local destination directory
     status: str = "pending"        # pending | copying | ready | failed
     size_bytes: int = 0
+    # Copy progress percent (0–100). Meaningful only while status == "copying";
+    # 0 for remote sources whose total size can't be known up front (the UI then
+    # shows an indeterminate bar with the live byte count instead).
+    progress: int = 0
     message: str = ""              # progress / error detail
     # JSON of a parsed config.yaml found at the root of a directory checkpoint
     # (empty object when there is no such file). Named config_metadata because

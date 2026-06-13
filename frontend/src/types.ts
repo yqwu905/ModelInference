@@ -45,6 +45,8 @@ export interface Checkpoint {
   local_path: string;
   status: CheckpointStatus;
   size_bytes: number;
+  // Copy progress percent (0–100); 0 means indeterminate (remote source).
+  progress: number;
   message: string;
   // Parsed config.yaml of a directory checkpoint (empty object when none).
   metadata: Record<string, unknown>;

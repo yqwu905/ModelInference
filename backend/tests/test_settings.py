@@ -259,6 +259,44 @@ def test_copy_passes_custom_port(client, tmp_path, monkeypatch):
     assert client.get(f"/api/checkpoints/{cid}").json()["status"] == "ready"
 
 
+# --- copy progress reporting -----------------------------------------------
+
+
+def test_local_copy_reports_progress_complete(client, tmp_path):
+    pid = client.post("/api/projects", json={"name": "P"}).json()["id"]
+    eid = client.post(f"/api/projects/{pid}/experiments", json={"name": "e"}).json()["id"]
+    src = tmp_path / "ckpt"
+    src.mkdir()
+    (src / "w.bin").write_bytes(b"\x00" * 2048)
+
+    cid = client.post(
+        f"/api/experiments/{eid}/checkpoints",
+        json={"display_name": "c", "source_host": "", "source_path": str(src)},
+    ).json()["id"]
+
+    ck = _poll(client, f"/api/checkpoints/{cid}", "status", {"ready", "failed"})
+    assert ck["status"] == "ready", ck["message"]
+    # progress is exposed and a finished copy reads 100
+    assert ck["progress"] == 100
+
+
+def test_source_total_bytes_local_vs_remote(tmp_path):
+    from app.services import copy_service
+
+    f = tmp_path / "a.bin"
+    f.write_bytes(b"x" * 100)
+    assert copy_service._source_total_bytes("", str(f)) == 100
+
+    d = tmp_path / "d"
+    d.mkdir()
+    (d / "b.bin").write_bytes(b"y" * 50)
+    (d / "c.bin").write_bytes(b"z" * 25)
+    assert copy_service._source_total_bytes("", str(d)) == 75
+
+    # a remote source can't be stat'd up front => unknown total (indeterminate)
+    assert copy_service._source_total_bytes("user@gpu", "/remote/ckpt") is None
+
+
 def test_copy_fails_clearly_when_sshpass_missing(client, tmp_path, monkeypatch):
     from app.services import copy_service
 
@@ -520,6 +558,40 @@ def test_inference_snapshots_engine_and_runs_it(client, tmp_path):
     # is what actually ran.
     assert done["status"] == "done", done["log"]
     assert "from-engine-MARKER" in done["log"]
+
+
+def test_engine_params_reach_command_line(client, tmp_path):
+    """Engine key/value params not templated in the command are appended as
+    --key value flags and actually reach the executed command."""
+    pid = client.post("/api/projects", json={"name": "P"}).json()["id"]
+    eid = client.post(f"/api/projects/{pid}/experiments", json={"name": "exp"}).json()["id"]
+
+    src = tmp_path / "ckpt"
+    src.mkdir()
+    (src / "w.bin").write_bytes(b"\x00" * 16)
+    cid = client.post(
+        f"/api/experiments/{eid}/checkpoints",
+        json={"display_name": "c", "source_host": "", "source_path": str(src)},
+    ).json()["id"]
+    _poll(client, f"/api/checkpoints/{cid}", "status", {"ready", "failed"})
+
+    # `echo` prints whatever args it gets — the command template references none
+    # of the params, so they must be auto-appended as flags.
+    engine = client.post(
+        "/api/settings/inference-engines",
+        json={"name": "echoer", "command": "echo", "params": {"prompt": "a cat", "steps": "20"}},
+    ).json()
+
+    r = client.post(
+        f"/api/checkpoints/{cid}/inferences",
+        json={"name": "run", "params": {"prompt": "a cat", "steps": "20"}, "engine_id": engine["id"]},
+    )
+    created = r.json()
+    done = _poll(client, f"/api/inferences/{created['id']}", "status", {"done", "failed"})
+    assert done["status"] == "done", done["log"]
+    # both the recorded command line and echo's stdout carry the flags
+    assert "--prompt 'a cat'" in done["log"]
+    assert "--steps 20" in done["log"]
 
 
 def test_inference_with_bad_engine_id_404(client, tmp_path):
