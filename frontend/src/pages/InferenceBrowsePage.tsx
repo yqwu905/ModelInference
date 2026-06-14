@@ -7,6 +7,8 @@ import {
   Card,
   Caption1,
   Checkbox,
+  Field,
+  Select,
   Subtitle2,
   Title3,
   Tree,
@@ -24,6 +26,7 @@ import type {
   Experiment,
   Inference,
   Project,
+  TestSet,
 } from "../types";
 import { useAsync, usePolling } from "../hooks";
 import { useSharedStyles } from "../theme/sharedStyles";
@@ -99,6 +102,7 @@ const useStyles = makeStyles({
     minWidth: 0,
   },
   winnerCol: { border: `2px solid ${tokens.colorPaletteGreenBorder2}` },
+  refCol: { border: `1px dashed ${tokens.colorNeutralStroke1}` },
   colHead: {
     display: "flex",
     alignItems: "center",
@@ -106,6 +110,16 @@ const useStyles = makeStyles({
     columnGap: tokens.spacingHorizontalS,
     flexWrap: "wrap",
   },
+  filterBar: {
+    display: "flex",
+    alignItems: "flex-end",
+    columnGap: tokens.spacingHorizontalL,
+    rowGap: tokens.spacingVerticalS,
+    flexWrap: "wrap",
+    marginTop: tokens.spacingVerticalM,
+    marginBottom: tokens.spacingVerticalM,
+  },
+  filterSelect: { minWidth: "220px" },
 });
 
 function paramsSummary(params: Record<string, unknown>): string {
@@ -171,6 +185,33 @@ export default function InferenceBrowsePage() {
     error: projectsError,
   } = useAsync(() => api.listProjects(), []);
   const projects = useMemo(() => projectsData ?? [], [projectsData]);
+
+  // --- test sets: drive the browse filter + the reference (lq) column ---
+  const { data: testSetsData, error: testSetsError } = useAsync(
+    () => api.listTestSets(),
+    [],
+  );
+  const testSets = useMemo(() => testSetsData ?? [], [testSetsData]);
+  const testSetById = useMemo(() => {
+    const m = new Map<number, TestSet>();
+    for (const t of testSets) m.set(t.id, t);
+    return m;
+  }, [testSets]);
+  const [filterTestSetId, setFilterTestSetId] = useState<number | "">("");
+  const [showTestSetColumn, setShowTestSetColumn] = useState(false);
+  const tsColumnVisible = showTestSetColumn && filterTestSetId !== "";
+  const {
+    data: testSetImagesData,
+    loading: testSetImagesLoading,
+    error: testSetImagesError,
+  } = useAsync(
+    () =>
+      filterTestSetId !== "" && showTestSetColumn
+        ? api.getTestSetImages(filterTestSetId)
+        : Promise.resolve({ images: [] as string[] }),
+    [filterTestSetId, showTestSetColumn],
+  );
+  const testSetImages = testSetImagesData?.images ?? [];
 
   const [expsByProject, setExpsByProject] = useState<Record<number, Experiment[]>>({});
   const [cksByExp, setCksByExp] = useState<Record<number, Checkpoint[]>>({});
@@ -277,6 +318,21 @@ export default function InferenceBrowsePage() {
     }
     return out;
   }, [selectedIds, infById, expById, ckById, projectById]);
+
+  // Keep the selection consistent with an active test-set filter: a filtered-out
+  // inference loses its tree checkbox, so drop it from the selection too —
+  // otherwise it would linger in the comparison grid (and AI-eval gating) next
+  // to an lq reference column from a different test set, with no way to uncheck.
+  useEffect(() => {
+    if (filterTestSetId === "") return;
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => {
+        const inf = infById.get(id);
+        return inf == null || inf.test_set_id === filterTestSetId;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [filterTestSetId, infById]);
 
   // --- lazily fetched images, keyed by inference id ---
   const [imagesById, setImagesById] = useState<Record<number, string[]>>({});
@@ -442,7 +498,11 @@ export default function InferenceBrowsePage() {
     }
     if (cks.length === 0) return placeholder(`e:${expId}:empty`, "（无检查点）");
     return cks.map((c) => {
-      const ckInfs = infs.filter((i) => i.checkpoint_id === c.id);
+      const ckInfs = infs.filter(
+        (i) =>
+          i.checkpoint_id === c.id &&
+          (filterTestSetId === "" || i.test_set_id === filterTestSetId),
+      );
       return (
         <TreeItem key={`c:${c.id}`} itemType="branch" value={`c:${c.id}`}>
           <TreeItemLayout aside={<StatusBadge status={c.status} />}>
@@ -450,7 +510,10 @@ export default function InferenceBrowsePage() {
           </TreeItemLayout>
           <Tree>
             {ckInfs.length === 0
-              ? placeholder(`c:${c.id}:empty`, "（无推理）")
+              ? placeholder(
+                  `c:${c.id}:empty`,
+                  filterTestSetId === "" ? "（无推理）" : "（无匹配推理）",
+                )
               : ckInfs.map(renderInferenceLeaf)}
           </Tree>
         </TreeItem>
@@ -482,7 +545,40 @@ export default function InferenceBrowsePage() {
         在左侧树中展开 项目 → 实验 → 检查点 → 推理，勾选已完成的推理（最多 {MAX_SELECTED} 个）进行并排对比。
       </Body1>
 
-      <ErrorBanner error={projectsError ?? treeError} />
+      <ErrorBanner
+        error={projectsError ?? treeError ?? testSetsError ?? testSetImagesError}
+      />
+
+      {testSets.length > 0 && (
+        <div className={s.filterBar}>
+          <Field label="测试集筛选" className={s.filterSelect}>
+            <Select
+              value={filterTestSetId === "" ? "" : String(filterTestSetId)}
+              onChange={(_, data) => {
+                const v = data.value ? Number(data.value) : "";
+                setFilterTestSetId(v);
+                // The reference column needs a concrete test set; drop it when
+                // the filter is cleared back to “全部”.
+                if (v === "") setShowTestSetColumn(false);
+              }}
+            >
+              <option value="">全部</option>
+              {testSets.map((t) => (
+                <option key={t.id} value={String(t.id)}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {filterTestSetId !== "" && (
+            <Checkbox
+              label="将测试集（lq）加入对比参考列"
+              checked={showTestSetColumn}
+              onChange={(_, data) => setShowTestSetColumn(!!data.checked)}
+            />
+          )}
+        </div>
+      )}
 
       <div className={s.layout}>
         {/* 左侧：层级树 */}
@@ -577,15 +673,48 @@ export default function InferenceBrowsePage() {
           </Card>
 
           {/* 对比网格 */}
-          {selected.length === 0 ? (
+          {selected.length === 0 && !tsColumnVisible ? (
             <div className={shared.empty}>在左侧勾选推理以并排对比。</div>
           ) : (
             <div
               className={s.grid}
               style={{
-                gridTemplateColumns: `repeat(${Math.min(selected.length, MAX_SELECTED)}, minmax(0,1fr))`,
+                gridTemplateColumns: `repeat(${selected.length + (tsColumnVisible ? 1 : 0)}, minmax(0,1fr))`,
               }}
             >
+              {tsColumnVisible && (
+                <div className={mergeClasses(s.col, s.refCol)}>
+                  <div className={s.colHead}>
+                    <Body1Strong className={shared.mono}>
+                      {testSetById.get(filterTestSetId as number)?.name ?? "测试集"}
+                    </Body1Strong>
+                    <Badge appearance="outline" color="informative">
+                      测试集 · lq
+                    </Badge>
+                  </div>
+                  <Caption1 className={shared.muted}>参考输入（不参与 AI 评测）</Caption1>
+                  {testSetImagesLoading ? (
+                    <Spinner size="tiny" />
+                  ) : testSetImages.length === 0 ? (
+                    <Body1 className={mergeClasses(shared.muted, shared.small)}>
+                      暂无图片。
+                    </Body1>
+                  ) : (
+                    <div className={shared.thumbs}>
+                      {testSetImages.map((src) => (
+                        <img
+                          key={src}
+                          className={shared.thumbImg}
+                          src={src}
+                          alt=""
+                          loading="lazy"
+                          onClick={() => setLightboxSrc(src)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {selected.map((c) => {
                 const inf = c.inf;
                 const isWinner = winnerInferenceId === inf.id;
@@ -604,6 +733,12 @@ export default function InferenceBrowsePage() {
                     <Caption1 className={shared.muted}>
                       {c.projectName} / {c.expName} / {c.ckName}
                     </Caption1>
+                    {inf.test_set_id != null && (
+                      <Caption1 className={shared.muted}>
+                        测试集：
+                        {testSetById.get(inf.test_set_id)?.name ?? `#${inf.test_set_id}`}
+                      </Caption1>
+                    )}
                     <Body1 className={mergeClasses(shared.muted, shared.small)}>
                       {paramsSummary(inf.params)}
                     </Body1>

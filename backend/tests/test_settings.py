@@ -6,6 +6,8 @@ per-inference engine snapshot used at run time.
 """
 from __future__ import annotations
 
+import os
+import stat
 import time
 
 import pytest
@@ -609,5 +611,193 @@ def test_inference_with_bad_engine_id_404(client, tmp_path):
     r = client.post(
         f"/api/checkpoints/{cid}/inferences",
         json={"name": "run", "params": {}, "engine_id": 999999},
+    )
+    assert r.status_code == 404, r.text
+
+
+# --- test sets -------------------------------------------------------------
+
+
+def test_test_set_crud(client):
+    r = client.post(
+        "/api/settings/test-sets",
+        json={"name": "lq", "path": "/data/testsets/lq", "description": "low quality"},
+    )
+    assert r.status_code == 201, r.text
+    ts = r.json()
+    tsid = ts["id"]
+    assert ts["name"] == "lq"
+    assert ts["path"] == "/data/testsets/lq"
+    assert ts["description"] == "low quality"
+
+    assert any(t["id"] == tsid for t in client.get("/api/settings/test-sets").json())
+    assert client.get(f"/api/settings/test-sets/{tsid}").json()["name"] == "lq"
+
+    # partial update leaves other fields intact
+    r = client.put(f"/api/settings/test-sets/{tsid}", json={"name": "lq-2"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "lq-2"
+    assert r.json()["path"] == "/data/testsets/lq"  # unchanged
+
+    assert client.delete(f"/api/settings/test-sets/{tsid}").status_code == 204
+    assert client.get(f"/api/settings/test-sets/{tsid}").status_code == 404
+
+
+def test_test_set_missing_404(client):
+    assert client.get("/api/settings/test-sets/999999").status_code == 404
+    assert client.put("/api/settings/test-sets/999999", json={"name": "x"}).status_code == 404
+    assert client.delete("/api/settings/test-sets/999999").status_code == 404
+
+
+def test_test_set_images_listing_and_file_serving(client, tmp_path):
+    folder = tmp_path / "lq"
+    folder.mkdir()
+    (folder / "a.png").write_bytes(b"PNG-A")
+    (folder / "b.jpg").write_bytes(b"JPG-B")
+    (folder / "notes.txt").write_text("ignore me")  # non-image, must be skipped
+
+    tsid = client.post(
+        "/api/settings/test-sets", json={"name": "lq", "path": str(folder)}
+    ).json()["id"]
+
+    r = client.get(f"/api/settings/test-sets/{tsid}/images")
+    assert r.status_code == 200, r.text
+    images = r.json()["images"]
+    # both images, sorted, and the .txt excluded
+    assert len(images) == 2
+    assert images[0].endswith("name=a.png")
+    assert images[1].endswith("name=b.jpg")
+
+    # the listed file streams its bytes back
+    r = client.get(f"/api/settings/test-sets/{tsid}/file", params={"name": "a.png"})
+    assert r.status_code == 200, r.text
+    assert r.content == b"PNG-A"
+
+    # a non-image (even if it exists on disk) is not served
+    assert (
+        client.get(
+            f"/api/settings/test-sets/{tsid}/file", params={"name": "notes.txt"}
+        ).status_code
+        == 404
+    )
+    # missing file
+    assert (
+        client.get(
+            f"/api/settings/test-sets/{tsid}/file", params={"name": "missing.png"}
+        ).status_code
+        == 404
+    )
+    # path traversal is rejected before touching the filesystem
+    assert (
+        client.get(
+            f"/api/settings/test-sets/{tsid}/file", params={"name": "../secret"}
+        ).status_code
+        == 400
+    )
+
+
+def test_test_set_images_unreadable_dir_degrades_to_empty(client, tmp_path):
+    # An unreadable directory passes is_dir() but raises on iterdir(); the
+    # endpoint must degrade to an empty list, not surface a 500.
+    if getattr(os, "geteuid", lambda: 1)() == 0:
+        pytest.skip("root bypasses directory permissions")
+    folder = tmp_path / "locked"
+    folder.mkdir()
+    (folder / "a.png").write_bytes(b"x")
+    os.chmod(folder, 0)
+    try:
+        tsid = client.post(
+            "/api/settings/test-sets", json={"name": "locked", "path": str(folder)}
+        ).json()["id"]
+        r = client.get(f"/api/settings/test-sets/{tsid}/images")
+        assert r.status_code == 200, r.text
+        assert r.json()["images"] == []
+    finally:
+        os.chmod(folder, stat.S_IRWXU)  # restore so tmp cleanup can remove it
+
+
+def test_test_set_images_empty_when_path_unset_or_missing(client, tmp_path):
+    # no path configured
+    tsid = client.post("/api/settings/test-sets", json={"name": "empty"}).json()["id"]
+    assert client.get(f"/api/settings/test-sets/{tsid}/images").json()["images"] == []
+
+    # path points at a directory that does not exist
+    tsid2 = client.post(
+        "/api/settings/test-sets",
+        json={"name": "gone", "path": str(tmp_path / "nope")},
+    ).json()["id"]
+    assert client.get(f"/api/settings/test-sets/{tsid2}/images").json()["images"] == []
+
+
+def test_inference_records_test_set_and_injects_path(client, tmp_path):
+    pid = client.post("/api/projects", json={"name": "P"}).json()["id"]
+    eid = client.post(f"/api/projects/{pid}/experiments", json={"name": "exp"}).json()["id"]
+
+    src = tmp_path / "ckpt"
+    src.mkdir()
+    (src / "w.bin").write_bytes(b"\x00" * 16)
+    cid = client.post(
+        f"/api/experiments/{eid}/checkpoints",
+        json={"display_name": "c", "source_host": "", "source_path": str(src)},
+    ).json()["id"]
+    _poll(client, f"/api/checkpoints/{cid}", "status", {"ready", "failed"})
+
+    # an engine whose `input` param is NOT templated in the command, so the
+    # injected test set path must reach the command line as `--input <path>`.
+    engine = client.post(
+        "/api/settings/inference-engines",
+        json={"name": "echoer", "command": "echo", "params": {"input": ""}},
+    ).json()
+
+    ts_path = str(tmp_path / "lq")
+    tsid = client.post(
+        "/api/settings/test-sets", json={"name": "lq", "path": ts_path}
+    ).json()["id"]
+
+    r = client.post(
+        f"/api/checkpoints/{cid}/inferences",
+        json={
+            "name": "run",
+            "params": {"input": ""},
+            "engine_id": engine["id"],
+            "test_set_id": tsid,
+            "test_set_param_key": "input",
+        },
+    )
+    assert r.status_code == 201, r.text
+    created = r.json()
+    # the test set id is recorded, and its path overrode the chosen param value
+    assert created["test_set_id"] == tsid
+    assert created["params"]["input"] == ts_path
+
+    done = _poll(client, f"/api/inferences/{created['id']}", "status", {"done", "failed"})
+    assert done["status"] == "done", done["log"]
+    # the path actually reached the executed command (echo'd it back)
+    assert ts_path in done["log"]
+
+
+def test_inference_with_bad_test_set_id_404(client, tmp_path):
+    pid = client.post("/api/projects", json={"name": "P"}).json()["id"]
+    eid = client.post(f"/api/projects/{pid}/experiments", json={"name": "e"}).json()["id"]
+    src = tmp_path / "ck"
+    src.mkdir()
+    (src / "w.bin").write_bytes(b"\x00" * 8)
+    cid = client.post(
+        f"/api/experiments/{eid}/checkpoints",
+        json={"display_name": "c", "source_host": "", "source_path": str(src)},
+    ).json()["id"]
+    _poll(client, f"/api/checkpoints/{cid}", "status", {"ready", "failed"})
+    engine = client.post(
+        "/api/settings/inference-engines", json={"name": "e", "command": "echo"}
+    ).json()
+
+    r = client.post(
+        f"/api/checkpoints/{cid}/inferences",
+        json={
+            "name": "run",
+            "params": {},
+            "engine_id": engine["id"],
+            "test_set_id": 999999,
+        },
     )
     assert r.status_code == 404, r.text

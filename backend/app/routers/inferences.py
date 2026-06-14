@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from .. import cascade, config, jobs
 from ..db import get_session
-from ..models import Checkpoint, Inference, InferenceEngine
+from ..models import Checkpoint, Inference, InferenceEngine, TestSet
 from ..schemas import InferenceCreate, InferenceUpdate
 from ..serializers import inference_out
 from ..services import inference_service
@@ -62,13 +62,26 @@ def create_inference(
         if engine is None:
             raise HTTPException(404, "engine not found")
 
+    # Resolve the optional test set and inject its folder path into the chosen
+    # param key, so the path reaches the command line the same way other params
+    # do (substituted via {key} or appended as --key value). Recording the id
+    # also drives browse-time filtering and the reference-image column.
+    params = dict(body.params)
+    if body.test_set_id is not None:
+        test_set = session.get(TestSet, body.test_set_id)
+        if test_set is None:
+            raise HTTPException(404, "test set not found")
+        if body.test_set_param_key:
+            params[body.test_set_param_key] = test_set.path
+
     inference = Inference(
         checkpoint_id=checkpoint_id,
         experiment_id=checkpoint.experiment_id,
         name=body.name,
-        params=json.dumps(body.params),
+        params=json.dumps(params),
         command=engine.command if engine else "",
         workdir=engine.workdir if engine else "",
+        test_set_id=body.test_set_id,
         status="running",
     )
     session.add(inference)

@@ -64,6 +64,8 @@ export interface Inference {
   // Command/workdir snapshotted from the engine at creation (empty for legacy rows).
   command: string;
   workdir: string;
+  // Test set this run was executed against (null if none / preset later deleted).
+  test_set_id: number | null;
   status: InferenceStatus;
   output_dir: string;
   log: string;
@@ -123,6 +125,9 @@ export interface InferenceInput {
   params: Record<string, unknown>;
   // Global engine to run with; its command/workdir are snapshotted server-side.
   engine_id?: number;
+  // Test set to run against; its path is injected into test_set_param_key.
+  test_set_id?: number;
+  test_set_param_key?: string;
 }
 
 // ---- global settings ----
@@ -190,4 +195,18 @@ export interface InferenceEngineInput {
   command?: string;
   workdir?: string;
   params?: Record<string, unknown>;
+}
+
+export interface TestSet {
+  id: number;
+  name: string;
+  path: string;
+  description: string;
+  created_at: string;
+}
+
+export interface TestSetInput {
+  name: string;
+  path?: string;
+  description?: string;
 }

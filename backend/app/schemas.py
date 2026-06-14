@@ -70,6 +70,11 @@ class InferenceCreate(BaseModel):
     # Global inference engine to run with; its command/workdir are snapshotted
     # onto the inference. Omitted => fall back to the project's legacy config.
     engine_id: Optional[int] = None
+    # Test set ("测试集") to run against (optional). When set, it is recorded on
+    # the inference and its folder path is injected into the ``params`` key named
+    # by ``test_set_param_key`` (so the path reaches the command line).
+    test_set_id: Optional[int] = None
+    test_set_param_key: Optional[str] = None
 
 
 class InferenceUpdate(BaseModel):
@@ -133,3 +138,16 @@ class InferenceEngineUpdate(BaseModel):
     command: Optional[str] = None
     workdir: Optional[str] = None
     params: Optional[dict[str, Any]] = None
+
+
+# ---- Settings: test sets ----
+class TestSetCreate(BaseModel):
+    name: str
+    path: str = ""
+    description: str = ""
+
+
+class TestSetUpdate(BaseModel):
+    name: Optional[str] = None
+    path: Optional[str] = None
+    description: Optional[str] = None

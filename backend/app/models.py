@@ -93,6 +93,11 @@ class Inference(SQLModel, table=True):
     # Empty => fall back to the project's legacy inference_command/workdir.
     command: str = ""
     workdir: str = ""
+    # Test set ("测试集") this run was executed against (nullable; no hard FK so a
+    # test set can be deleted freely). Recorded for browse-time filtering and to
+    # surface the test set's input images alongside the results. The set's folder
+    # path is also injected into the chosen param key at creation time.
+    test_set_id: Optional[int] = Field(default=None)
     status: str = "pending"        # pending | running | done | failed
     output_dir: str = ""
     log: str = ""
@@ -156,4 +161,18 @@ class InferenceEngine(SQLModel, table=True):
     workdir: str = ""
     # JSON object of {param_name: default_value} key/value pairs.
     params: str = "{}"
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class TestSet(SQLModel, table=True):
+    """Reusable test set ("测试集"): a named folder of input/reference images
+    (e.g. the low-quality inputs for a restoration task). Picked when running an
+    inference — its ``path`` is injected into a chosen parameter key — and used
+    on the browse page to filter results and to show its images as a reference
+    column next to the outputs."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    path: str = ""                 # folder path holding the test set's images
+    description: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
