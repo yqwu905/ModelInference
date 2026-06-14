@@ -16,6 +16,7 @@ from .models import (
     InferenceEngine,
     Project,
     ServerConfig,
+    TestSet,
     VlmPreset,
 )
 
@@ -84,6 +85,7 @@ def inference_out(i: Inference) -> dict[str, Any]:
         "params": _loads(i.params, {}),
         "command": i.command,
         "workdir": i.workdir,
+        "test_set_id": i.test_set_id,
         "status": i.status,
         "output_dir": i.output_dir,
         "log": i.log,
@@ -139,4 +141,14 @@ def inference_engine_out(e: InferenceEngine) -> dict[str, Any]:
         "workdir": e.workdir,
         "params": _loads(e.params, {}),
         "created_at": e.created_at.isoformat(),
+    }
+
+
+def test_set_out(t: TestSet) -> dict[str, Any]:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "path": t.path,
+        "description": t.description,
+        "created_at": t.created_at.isoformat(),
     }

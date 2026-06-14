@@ -13,6 +13,8 @@ import type {
   ProjectInput,
   ServerConfig,
   ServerInput,
+  TestSet,
+  TestSetInput,
   VlmPreset,
   VlmPresetInput,
   VlmTestResult,
@@ -126,4 +128,14 @@ export const api = {
     req<InferenceEngine>("PUT", `/api/settings/inference-engines/${id}`, body),
   deleteInferenceEngine: (id: number) =>
     req<void>("DELETE", `/api/settings/inference-engines/${id}`),
+
+  // Settings: test sets（测试集）
+  listTestSets: () => req<TestSet[]>("GET", "/api/settings/test-sets"),
+  createTestSet: (body: TestSetInput) =>
+    req<TestSet>("POST", "/api/settings/test-sets", body),
+  updateTestSet: (id: number, body: TestSetInput) =>
+    req<TestSet>("PUT", `/api/settings/test-sets/${id}`, body),
+  deleteTestSet: (id: number) => req<void>("DELETE", `/api/settings/test-sets/${id}`),
+  getTestSetImages: (id: number) =>
+    req<{ images: string[] }>("GET", `/api/settings/test-sets/${id}/images`),
 };

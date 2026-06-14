@@ -29,6 +29,8 @@ CheckpointOut = {
 
 InferenceOut = {
   id, checkpoint_id, experiment_id, name, params:object,
+  command:str, workdir:str,           // snapshotted from the chosen inference engine
+  test_set_id:int|null,               // test set ("测试集") this run used, if any
   status:"pending"|"running"|"done"|"failed", output_dir:str, log:str, created_at
 }
 
@@ -38,6 +40,8 @@ EvaluationOut = {
   result: { winner?:"A"|"B"|"tie", score_a?:number, score_b?:number, reason?:string, raw?:string },
   error:str, created_at
 }
+
+TestSetOut = { id, name, path:str, description:str, created_at }   // global preset: a folder of input/reference (lq) images
 ```
 
 Request bodies are the Pydantic models in `app/schemas.py` (already written):
@@ -94,6 +98,10 @@ NOTE: trailing-slash semantics — append "/" to a directory source so contents 
   Checkpoint must be `ready` (else 409). Create row status `running`,
   `output_dir = config.INFERENCES_DIR/<id>/`, `experiment_id` copied from checkpoint, then
   `jobs.submit(inference_service.run_inference, inference_id)`. Return immediately.
+  `InferenceCreate` also accepts optional `engine_id` (snapshots the engine's command/workdir),
+  `test_set_id` (404 if missing; recorded on the row for browse-time filtering), and
+  `test_set_param_key` (when both are given, the test set's `path` is written into
+  `params[test_set_param_key]` so it reaches the command line like any other param).
 - `GET  /api/inferences/{inference_id}` → InferenceOut
 - `PUT  /api/inferences/{inference_id}` (InferenceUpdate) → InferenceOut (rename)
 - `DELETE /api/inferences/{inference_id}` → 204 (remove output_dir)
@@ -131,6 +139,23 @@ base64-encode as data URIs. Build an OpenAI chat-completions request to
 `{winner,score_a,score_b,reason, raw:<full text>}` in result, status `done`. On any error →
 status `failed`, error=str(e). Image content part shape:
 `{"type":"image_url","image_url":{"url":"data:image/png;base64,...."}}`.
+
+### Settings: test sets — `app/routers/settings.py` (`router` prefix `/api/settings`)
+A test set ("测试集") is a global preset: a named folder of input/reference (lq) images, picked
+when running an inference and used on the browse page to filter results and to show its images
+as a read-only reference column beside the outputs.
+- `GET  /api/settings/test-sets` → TestSetOut[] (newest first)
+- `POST /api/settings/test-sets` (TestSetCreate) → TestSetOut, 201
+- `GET  /api/settings/test-sets/{id}` → TestSetOut (404 if missing)
+- `PUT  /api/settings/test-sets/{id}` (TestSetUpdate) → TestSetOut (`exclude_unset` partial update)
+- `DELETE /api/settings/test-sets/{id}` → 204 (inferences keep their now-dangling `test_set_id`)
+- `GET  /api/settings/test-sets/{id}/images` → `{ "images": string[] }`. Top-level image files in
+  the folder (suffix in `config.IMAGE_EXTENSIONS`), each a URL to the `/file` endpoint; `[]` when
+  the path is unset or not a directory. Unlike inference outputs, a test set lives at an arbitrary
+  path (outside `DATA_DIR`), so it is NOT served by the static `/files` mount.
+- `GET  /api/settings/test-sets/{id}/file?name=<filename>` → streams one image. Traversal-guarded:
+  `name` must be a bare filename whose resolved path sits directly inside the resolved test set
+  directory and has a recognised image suffix (else 400/404).
 
 ## Frontend (already-written foundation: `src/types.ts`, `src/api.ts`, `src/styles.css`, `src/main.tsx`)
 Components import the typed `api` client and the `*Out` types. Use the API exactly as above.

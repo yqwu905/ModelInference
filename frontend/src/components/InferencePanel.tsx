@@ -13,7 +13,7 @@ import {
 } from "@fluentui/react-components";
 import { Add20Regular } from "@fluentui/react-icons";
 import { api } from "../api";
-import type { Checkpoint, Inference, InferenceEngine, Project } from "../types";
+import type { Checkpoint, Inference, InferenceEngine, Project, TestSet } from "../types";
 import { useAsync, usePolling } from "../hooks";
 import {
   ConfirmButton,
@@ -174,11 +174,23 @@ function RenameInferenceModal({
   );
 }
 
+// Tokens the runtime always substitutes with real values (see inference_service):
+// a param named like these can't carry the test set path, so they are excluded
+// as injection targets.
+const RESERVED_PARAM_KEYS = new Set(["checkpoint", "output_dir"]);
+
+/** First injectable param key of an engine (skipping reserved tokens), or "". */
+function firstParamKey(engine: InferenceEngine | null): string {
+  if (!engine) return "";
+  return Object.keys(engine.params ?? {}).find((k) => !RESERVED_PARAM_KEYS.has(k)) ?? "";
+}
+
 function RunInferenceModal({
   open,
   engines,
   defaultEngineId,
   readyCheckpoints,
+  testSets,
   defaultName,
   onClose,
   onCreated,
@@ -187,6 +199,7 @@ function RunInferenceModal({
   engines: InferenceEngine[];
   defaultEngineId: number | null;
   readyCheckpoints: Checkpoint[];
+  testSets: TestSet[];
   defaultName: string;
   onClose: () => void;
   onCreated: () => void;
@@ -204,17 +217,30 @@ function RunInferenceModal({
   const [values, setValues] = useState<Record<string, string>>(() =>
     engineParamValues(engines.find((e) => e.id === initialEngineId) ?? null),
   );
+  // Optional test set: its folder path is injected into `testSetParamKey`.
+  const [testSetId, setTestSetId] = useState<number | "">("");
+  const [testSetParamKey, setTestSetParamKey] = useState<string>(() =>
+    firstParamKey(engines.find((e) => e.id === initialEngineId) ?? null),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedEngine = engines.find((e) => e.id === engineId) ?? null;
   const paramKeys = selectedEngine ? Object.keys(selectedEngine.params ?? {}) : [];
+  // Keys the test set path may be written into (reserved tokens excluded).
+  const injectableKeys = paramKeys.filter((k) => !RESERVED_PARAM_KEYS.has(k));
+  const selectedTestSet = testSets.find((t) => t.id === testSetId) ?? null;
+  // The param key actually receiving the test set path (none when no test set).
+  const injectKey = testSetId !== "" ? testSetParamKey : "";
 
-  // Switching engines re-seeds the param inputs with that engine's defaults.
+  // Switching engines re-seeds the param inputs + the inject target with that
+  // engine's defaults / first key.
   const pickEngine = (idStr: string) => {
     const id = idStr ? Number(idStr) : "";
+    const engine = engines.find((e) => e.id === id) ?? null;
     setEngineId(id);
-    setValues(engineParamValues(engines.find((e) => e.id === id) ?? null));
+    setValues(engineParamValues(engine));
+    setTestSetParamKey(firstParamKey(engine));
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -223,10 +249,14 @@ function RunInferenceModal({
     setSaving(true);
     setError(null);
     try {
+      const params: Record<string, string> = { ...values };
+      if (injectKey && selectedTestSet) params[injectKey] = selectedTestSet.path;
       await api.createInference(checkpointId, {
         name: name.trim(),
-        params: { ...values },
+        params,
         engine_id: engineId,
+        ...(testSetId !== "" ? { test_set_id: testSetId } : {}),
+        ...(testSetId !== "" && injectKey ? { test_set_param_key: injectKey } : {}),
       });
       onCreated();
     } catch (err) {
@@ -270,16 +300,59 @@ function RunInferenceModal({
         <Field label="名称" required>
           <Input value={name} required onChange={(_, data) => setName(data.value)} />
         </Field>
-        {paramKeys.map((key) => (
-          <Field label={key} key={key}>
-            <Input
-              value={values[key] ?? ""}
-              onChange={(_, data) =>
-                setValues((prev) => ({ ...prev, [key]: data.value }))
-              }
-            />
-          </Field>
-        ))}
+        {paramKeys.map((key) => {
+          const injected = key === injectKey && selectedTestSet != null;
+          return (
+            <Field
+              label={key}
+              key={key}
+              hint={injected ? `由测试集「${selectedTestSet!.name}」填充` : undefined}
+            >
+              <Input
+                value={injected ? selectedTestSet!.path : values[key] ?? ""}
+                disabled={injected}
+                onChange={(_, data) =>
+                  setValues((prev) => ({ ...prev, [key]: data.value }))
+                }
+              />
+            </Field>
+          );
+        })}
+        <Field label="测试集" hint="可选。选用后把其文件夹路径写入下方所选参数，并记录到本次推理用于筛选与对比。">
+          <Select
+            value={testSetId === "" ? "" : String(testSetId)}
+            onChange={(_, data) => setTestSetId(data.value ? Number(data.value) : "")}
+          >
+            <option value="">不使用</option>
+            {testSets.map((t) => (
+              <option key={t.id} value={String(t.id)}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {testSetId !== "" &&
+          (injectableKeys.length > 0 ? (
+            <Field label="写入参数" hint="测试集的文件夹路径将作为该参数的值传入命令。">
+              <Select
+                value={injectableKeys.includes(testSetParamKey) ? testSetParamKey : ""}
+                onChange={(_, data) => setTestSetParamKey(data.value)}
+              >
+                {!injectableKeys.includes(testSetParamKey) && (
+                  <option value="">（选择参数）</option>
+                )}
+                {injectableKeys.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : (
+            <p className={s.hint}>
+              当前推理工程没有可写入测试集路径的参数；本次推理仍会记录所选测试集。
+            </p>
+          ))}
         <div className={s.actions}>
           <Button type="button" onClick={onClose} disabled={saving}>
             取消
@@ -376,6 +449,11 @@ export default function InferencePanel({
     error: enginesError,
     reload: reloadEngines,
   } = useAsync(() => api.listInferenceEngines(), []);
+  const {
+    data: testSets,
+    error: testSetsError,
+    reload: reloadTestSets,
+  } = useAsync(() => api.listTestSets(), []);
 
   const [runOpen, setRunOpen] = useState(false);
   const [viewing, setViewing] = useState<Inference | null>(null);
@@ -414,6 +492,7 @@ export default function InferencePanel({
           onClick={() => {
             void reloadCheckpoints();
             void reloadEngines();
+            void reloadTestSets();
             setRunOpen(true);
           }}
         >
@@ -428,7 +507,15 @@ export default function InferencePanel({
         <p className={s.hint}>请先在“设置 → 推理工程”中创建一个推理工程，然后才能运行推理。</p>
       )}
 
-      <ErrorBanner error={inferencesError ?? checkpointsError ?? enginesError ?? actionError} />
+      <ErrorBanner
+        error={
+          inferencesError ??
+          checkpointsError ??
+          enginesError ??
+          testSetsError ??
+          actionError
+        }
+      />
 
       {inferencesLoading ? (
         <Spinner />
@@ -454,6 +541,7 @@ export default function InferencePanel({
           engines={engines ?? []}
           defaultEngineId={project.default_engine_id}
           readyCheckpoints={readyCheckpoints}
+          testSets={testSets ?? []}
           defaultName={defaultName}
           onClose={() => setRunOpen(false)}
           onCreated={() => {

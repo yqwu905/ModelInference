@@ -22,6 +22,8 @@ import type {
   InferenceEngineInput,
   ServerConfig,
   ServerInput,
+  TestSet,
+  TestSetInput,
   VlmPreset,
   VlmPresetInput,
   VlmTestResult,
@@ -30,7 +32,7 @@ import { useAsync } from "../hooks";
 import { useSharedStyles } from "../theme/sharedStyles";
 import { ConfirmButton, ErrorBanner, Modal, Spinner, formatDate } from "../components/ui";
 
-type TabValue = "servers" | "vlm" | "engines";
+type TabValue = "servers" | "vlm" | "engines" | "testsets";
 
 const useStyles = makeStyles({
   tabs: { marginBottom: tokens.spacingVerticalL },
@@ -82,9 +84,18 @@ export default function SettingsPage() {
         <Tab value="servers">服务器</Tab>
         <Tab value="vlm">VLM</Tab>
         <Tab value="engines">推理工程</Tab>
+        <Tab value="testsets">测试集</Tab>
       </TabList>
 
-      {tab === "servers" ? <ServersTab /> : tab === "vlm" ? <VlmTab /> : <EnginesTab />}
+      {tab === "servers" ? (
+        <ServersTab />
+      ) : tab === "vlm" ? (
+        <VlmTab />
+      ) : tab === "engines" ? (
+        <EnginesTab />
+      ) : (
+        <TestSetsTab />
+      )}
     </div>
   );
 }
@@ -794,6 +805,181 @@ function EngineModal(props: {
           hint="默认以 --键 值 追加到命令；命令中用 {键} 引用则改为就地替换。运行推理时可临时修改默认值。空值则追加为 --键 开关。"
         >
           <KeyValueEditor pairs={pairs} onChange={setPairs} />
+        </Field>
+        <div className={s.actions}>
+          <Button type="button" onClick={onClose} disabled={submitting}>
+            取消
+          </Button>
+          <Button type="submit" appearance="primary" disabled={submitting || !name.trim()}>
+            {submitting ? "保存中…" : "保存"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 测试集
+// ---------------------------------------------------------------------------
+
+function TestSetsTab() {
+  const shared = useSharedStyles();
+  const s = useStyles();
+  const { data, loading, error, reload } = useAsync(() => api.listTestSets(), []);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<TestSet | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const handleDelete = async (id: number) => {
+    setActionError(null);
+    try {
+      await api.deleteTestSet(id);
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div>
+      <div className={shared.toolbar}>
+        <Button appearance="primary" icon={<Add20Regular />} onClick={() => setCreating(true)}>
+          新建测试集
+        </Button>
+      </div>
+
+      <p className={`${shared.muted} ${shared.small}`} style={{ marginTop: 0 }}>
+        测试集是一个存放输入/参考图片的文件夹；运行推理时可选用并把其路径写入指定参数，浏览结果时可按测试集筛选，并将测试集图片作为参考列加入对比。
+      </p>
+
+      <ErrorBanner error={error ?? actionError} />
+
+      {loading ? (
+        <Spinner label="加载中…" />
+      ) : !data || data.length === 0 ? (
+        <div className={shared.empty}>还没有测试集，点击上方新建一个吧。</div>
+      ) : (
+        <div className={shared.col}>
+          {data.map((ts) => (
+            <Card key={ts.id}>
+              <div className={s.cardHeader}>
+                <Body1Strong>{ts.name}</Body1Strong>
+                <Badge appearance="outline" color="informative">
+                  {formatDate(ts.created_at)}
+                </Badge>
+              </div>
+              <div className={shared.kv}>
+                <span className={shared.kvKey}>路径</span>
+                <span className={shared.kvVal}>{ts.path || "—"}</span>
+                {ts.description && (
+                  <>
+                    <span className={shared.kvKey}>描述</span>
+                    <span className={shared.kvVal}>{ts.description}</span>
+                  </>
+                )}
+              </div>
+              <div className={shared.btnRow}>
+                <Button size="small" onClick={() => setEditing(ts)}>
+                  编辑
+                </Button>
+                <ConfirmButton
+                  message={`删除测试集「${ts.name}」？（不影响已有推理）`}
+                  onConfirm={() => handleDelete(ts.id)}
+                >
+                  删除
+                </ConfirmButton>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {creating && (
+        <TestSetModal
+          title="新建测试集"
+          onClose={() => setCreating(false)}
+          onSubmit={async (input) => {
+            await api.createTestSet(input);
+            await reload();
+            setCreating(false);
+          }}
+        />
+      )}
+      {editing && (
+        <TestSetModal
+          title="编辑测试集"
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSubmit={async (input) => {
+            await api.updateTestSet(editing.id, input);
+            await reload();
+            setEditing(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TestSetModal(props: {
+  title: string;
+  initial?: TestSet;
+  onClose: () => void;
+  onSubmit: (input: TestSetInput) => Promise<void>;
+}) {
+  const { title, initial, onClose, onSubmit } = props;
+  const shared = useSharedStyles();
+  const s = useStyles();
+  const [name, setName] = useState(initial?.name ?? "");
+  const [path, setPath] = useState(initial?.path ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    if (!name.trim()) {
+      setError("名称为必填项。");
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await onSubmit({ name: name.trim(), path: path.trim(), description: description.trim() });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={title}>
+      <form onSubmit={handleSubmit}>
+        <ErrorBanner error={error} />
+        <Field label="名称" required>
+          <Input
+            value={name}
+            autoFocus
+            placeholder="LQ 测试集 A"
+            onChange={(_, d) => setName(d.value)}
+          />
+        </Field>
+        <Field label="文件夹路径" hint="存放该测试集图片的本机文件夹绝对路径。">
+          <Input
+            value={path}
+            placeholder="/data/testsets/lq"
+            className={shared.mono}
+            onChange={(_, d) => setPath(d.value)}
+          />
+        </Field>
+        <Field label="描述">
+          <Textarea
+            value={description}
+            resize="vertical"
+            placeholder="可选描述"
+            onChange={(_, d) => setDescription(d.value)}
+          />
         </Field>
         <div className={s.actions}>
           <Button type="button" onClick={onClose} disabled={submitting}>
